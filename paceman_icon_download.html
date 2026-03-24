@@ -1,0 +1,45 @@
+
+<canvas id="c" width="1024" height="1024" style="display:none"></canvas>
+<div style="padding: 1rem 0; display:flex; flex-direction:column; align-items:center; gap:16px;">
+  <canvas id="preview" width="200" height="200" style="border-radius:44px;"></canvas>
+  <a id="dl" download="paceman-icon.png"
+    style="padding:12px 28px; background:#1B6FE8; color:white; border-radius:10px; font-size:15px; font-weight:600; text-decoration:none; font-family:-apple-system,sans-serif;">
+    Download PNG
+  </a>
+  <p style="font-size:12px; color:#999; font-family:-apple-system,sans-serif; margin:0;">1024×1024px · iOS ready</p>
+</div>
+<script>
+function draw(canvas) {
+  const s = canvas.width;
+  const ctx = canvas.getContext("2d");
+  const r = s * 0.15;
+  ctx.clearRect(0,0,s,s);
+  ctx.beginPath();
+  ctx.moveTo(r,0);
+  ctx.lineTo(s-r,0);
+  ctx.quadraticCurveTo(s,0,s,r);
+  ctx.lineTo(s,s-r);
+  ctx.quadraticCurveTo(s,s,s-r,s);
+  ctx.lineTo(r,s);
+  ctx.quadraticCurveTo(0,s,0,s-r);
+  ctx.lineTo(0,r);
+  ctx.quadraticCurveTo(0,0,r,0);
+  ctx.closePath();
+  ctx.fillStyle="#1B6FE8";
+  ctx.fill();
+  ctx.fillStyle="#ffffff";
+  ctx.textAlign="center";
+  ctx.textBaseline="middle";
+  const fs = s*0.22;
+  ctx.font=`800 ${fs}px -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif`;
+  ctx.letterSpacing = s*0.005+"px";
+  ctx.fillText("PACE", s/2, s*0.38);
+  ctx.fillText("MAN",  s/2, s*0.64);
+}
+
+const big = document.getElementById("c");
+const small = document.getElementById("preview");
+draw(big);
+draw(small);
+document.getElementById("dl").href = big.toDataURL("image/png");
+</script>
