@@ -956,7 +956,12 @@ function NavBar({ screen, onNav }) {
 // ── Main App ──
 
 export default function App() {
-  const [store, setStore] = useState(()=>({ profile:defaultProfile, sessions:[], weekPlan:null, strava:null, ...loadStore() }));
+  const [store, setStore] = useState(()=>{
+    const s = { profile:defaultProfile, sessions:[], weekPlan:null, strava:null, ...loadStore() };
+    // Strip legacy content field so old stored plans don't render as raw markdown
+    if (s.weekPlan?.content) { const { content:_, ...rest } = s.weekPlan; s.weekPlan = rest; }
+    return s;
+  });
   const [screen, setScreen] = useState("home");
   const [loading, setLoading] = useState(false);
   const [aiText, setAiText] = useState("");
@@ -1091,7 +1096,7 @@ WEEKGOALS_JSON
 session_type must be one of: rest, run_threshold, run_easy, run_long, crossfit, run_interval.
 mainSet: null for rest/crossfit, otherwise 1–2 sentences with concrete targets (reps, pace, HR, rest).`;
 
-      const r = await callClaude(SYSTEM, prompt);
+      const r = await callClaude("You are a running coach AI. Respond with valid JSON only — no markdown, no prose, no commentary.", prompt);
 
       // Parse the week goals JSON — try delimiters first, then code fence, then raw JSON
       let weekGoals = null;
