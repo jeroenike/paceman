@@ -1093,14 +1093,13 @@ mainSet: null for rest/crossfit, otherwise 1–2 sentences with concrete targets
 
       const r = await callClaude(SYSTEM, prompt);
 
-      // Parse the week goals JSON from response
+      // Parse the week goals JSON — try delimiters first, then code fence, then raw JSON
       let weekGoals = null;
-      let content = r;
-      const jsonMatch = r.match(/WEEKGOALS_JSON\s*([\s\S]*?)\s*WEEKGOALS_JSON/);
-      if (jsonMatch) {
-        try { weekGoals = JSON.parse(jsonMatch[1]); } catch(e) {}
-        content = r.replace(/WEEKGOALS_JSON[\s\S]*?WEEKGOALS_JSON/, "").trim();
-      }
+      const delimMatch = r.match(/WEEKGOALS_JSON\s*([\s\S]*?)\s*WEEKGOALS_JSON/);
+      const fenceMatch = r.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      const rawMatch = r.match(/\{[\s\S]*\}/);
+      const candidate = delimMatch?.[1] ?? fenceMatch?.[1] ?? rawMatch?.[0] ?? null;
+      if (candidate) { try { weekGoals = JSON.parse(candidate); } catch(e) {} }
 
       persist({ weekPlan:{ weekGoals, weekStart, generated:new Date().toISOString() } });
     });
