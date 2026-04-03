@@ -35,6 +35,12 @@ function getWeekStart(date) {
   return d.toISOString().split("T")[0];
 }
 function getCurrentWeekStart() { return getWeekStart(new Date()); }
+function getPlannedDay(sessionDate, weekPlan) {
+  if (!weekPlan?.weekStart || !sessionDate) return null;
+  if (getWeekStart(sessionDate) !== weekPlan.weekStart) return null;
+  const d = new Date(sessionDate + "T00:00:00");
+  return DAY_LABELS[d.getDay() === 0 ? 6 : d.getDay() - 1];
+}
 
 async function callClaude(system, user) {
   const res = await fetch("/api/claude", {
@@ -329,6 +335,8 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
         today={today}
         weekStart={planWeekStart}
         onSessionTap={onSessionTap}
+        sessions={store.sessions}
+        weekPlan={store.weekPlan}
       />
     </div>
   );
@@ -336,7 +344,7 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
 
 // ── Week Day List ──
 
-function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap }) {
+function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, sessions, weekPlan }) {
   const [expandedDay, setExpandedDay] = useState(null);
   const weekStartDate = new Date(weekStart + "T00:00:00");
   return (
@@ -353,6 +361,8 @@ function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap }) 
         const dayDate = new Date(weekStartDate);
         dayDate.setDate(weekStartDate.getDate() + i);
         const dateStr = dayDate.toLocaleDateString("en-GB", { day:"numeric", month:"short" });
+        // Find session linked to this planned day
+        const linked = sessions?.find(s => s.plannedDay === day && weekPlan?.weekStart && getWeekStart(s.date) === weekPlan.weekStart);
         return (
           <div key={day}
             onClick={() => setExpandedDay(isExpanded ? null : day)}
@@ -364,7 +374,8 @@ function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap }) 
                 <span style={{ fontSize:11,color:"#bbb" }}>{dateStr}</span>
                 <span style={{ marginLeft:"auto",fontSize:11,fontWeight:700,color,background:`${color}18`,padding:"2px 8px",borderRadius:20 }}>{label}</span>
                 {isToday&&<span style={{ fontSize:10,color,fontWeight:800,letterSpacing:"0.06em" }}>TODAY</span>}
-                <span style={{ fontSize:13,color:"#ccc",marginLeft:2,transition:"transform 0.15s",display:"inline-block",transform:isExpanded?"rotate(90deg)":"none" }}>›</span>
+                {linked?.score&&<span style={{ fontSize:12,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>}
+                <span style={{ fontSize:13,color:"#ccc",marginLeft:2,display:"inline-block",transform:isExpanded?"rotate(90deg)":"none",transition:"transform 0.15s" }}>›</span>
               </div>
               {/* Collapsed preview */}
               {!isExpanded&&mainSet&&(
@@ -374,13 +385,56 @@ function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap }) 
               {isExpanded&&(
                 <div style={{ marginTop:10 }}>
                   {mainSet
-                    ? <div style={{ fontSize:13,color:"#333",lineHeight:1.65 }}>{mainSet}</div>
-                    : <div style={{ fontSize:12,color:"#bbb",fontStyle:"italic" }}>No training details for this day.</div>
+                    ? <div style={{ fontSize:13,color:"#333",lineHeight:1.65,marginBottom:linked?10:0 }}>{mainSet}</div>
+                    : <div style={{ fontSize:12,color:"#bbb",fontStyle:"italic",marginBottom:linked?10:0 }}>No training details for this day.</div>
                   }
+                  {/* Actual session panel */}
+                  {linked&&(
+                    <div style={{ padding:"10px 12px",borderRadius:8,background:"#f9f9f7",border:"1px solid #eee" }}>
+                      <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6 }}>
+                        <span style={{ fontSize:11,color:"#aaa",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em" }}>Actual</span>
+                        {linked.score&&(
+                          <div style={{ textAlign:"right" }}>
+                            <span style={{ fontSize:16,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display:"flex",gap:10,flexWrap:"wrap",fontSize:12,color:"#555",marginBottom:6 }}>
+                        {linked.distance&&<span>{linked.distance} km</span>}
+                        {linked.avgPace&&<span>{linked.avgPace}/km</span>}
+                        {linked.avgHR&&<span>HR {linked.avgHR}</span>}
+                        {linked.rpe&&<span>RPE {linked.rpe}/10</span>}
+                      </div>
+                      {(()=>{
+                        const indicators = [];
+                        const tSecs = parsePace(weekPlan?.weekGoals?.targetPace);
+                        const aSecs = parsePace(linked.avgPace);
+                        if (tSecs&&aSecs) {
+                          const diff = aSecs - tSecs;
+                          indicators.push(diff<=0
+                            ? { label:`Pace on target (${secsTopace(Math.abs(diff))} ahead)`, color:"#0F6E56" }
+                            : { label:`Pace ${secsTopace(diff)} behind plan`, color:"#c00" });
+                        }
+                        const rpe = Number(linked.rpe);
+                        if (rpe) indicators.push(
+                          rpe<=5 ? { label:"RPE low — under-effort", color:"#b07000" }
+                          : rpe<=7 ? { label:"RPE controlled", color:"#0F6E56" }
+                          : rpe<=8 ? { label:"RPE high — check load", color:"#b07000" }
+                          : { label:"RPE very high — recovery needed", color:"#c00" }
+                        );
+                        return indicators.length ? (
+                          <div style={{ display:"flex",flexDirection:"column",gap:2,marginBottom:6 }}>
+                            {indicators.map((ind,j)=><span key={j} style={{ fontSize:11,fontWeight:600,color:ind.color }}>{ind.label}</span>)}
+                          </div>
+                        ) : null;
+                      })()}
+                      {linked.score?.verdict&&<div style={{ fontSize:12,color:"#666",fontStyle:"italic" }}>"{linked.score.verdict}"</div>}
+                    </div>
+                  )}
                   {isRun&&(
                     <button
                       onClick={e=>{ e.stopPropagation(); onSessionTap(day); }}
-                      style={{ marginTop:12,padding:"7px 14px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE833",fontSize:13,fontWeight:600,cursor:"pointer" }}>
+                      style={{ marginTop:10,padding:"7px 14px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE833",fontSize:13,fontWeight:600,cursor:"pointer" }}>
                       Session detail →
                     </button>
                   )}
@@ -495,6 +549,7 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
                     <div style={{ width:7,height:7,borderRadius:"50%",background:SESSION_COLORS[s.type]||"#888",flexShrink:0 }}/>
                     <span style={{ fontSize:14,fontWeight:700,color:"#1a1a1a" }}>{SESSION_LABELS[s.type]||s.type}</span>
                     {s.stravaId&&<span style={{ fontSize:10,padding:"2px 6px",borderRadius:4,background:"#FC4C0222",color:"#FC4C02",fontWeight:700 }}>Strava</span>}
+                    {s.plannedDay&&<Chip label={`Plan: ${s.plannedDay}`} color={SESSION_COLORS[store.weekPlan?.weekGoals?.daySessions?.[s.plannedDay]?.type]||"#888780"}/>}
                   </div>
                   <div style={{ fontSize:12,color:"#aaa" }}>
                     {s.date}{s.time?` · ${s.time}`:""}{s.location?` · ${s.location}`:""}
@@ -503,6 +558,7 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
                 <div style={{ display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end" }}>
                   {s.avgPace&&<Chip label={s.avgPace+"/km"} color="#1B6FE8"/>}
                   {s.distance&&<Chip label={s.distance+"km"} color="#7C3AED"/>}
+                  {s.score&&<span style={{ fontSize:12,fontWeight:800,padding:"3px 8px",borderRadius:6,background:s.score.value>=8?"#e8f8f0":s.score.value>=6?"#fff8e0":"#fff0f0",color:s.score.value>=8?"#0F6E56":s.score.value>=6?"#b07000":"#c00" }}>{s.score.value}/10</span>}
                 </div>
               </div>
 
@@ -514,6 +570,22 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
                 {s.rpe&&<span>· RPE {s.rpe}/10</span>}
                 {s.te&&<span>· TE {s.te}</span>}
               </div>
+
+              {store.weekPlan&&(
+                <div style={{ display:"flex",alignItems:"center",gap:8,margin:"6px 0 2px",flexWrap:"wrap" }}>
+                  <span style={{ fontSize:11,color:"#aaa",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em" }}>Link</span>
+                  <select value={s.plannedDay||""} onChange={e=>{ e.stopPropagation(); onSaveSession({...s,plannedDay:e.target.value||null}); }} onClick={e=>e.stopPropagation()}
+                    style={{ fontSize:12,padding:"3px 6px",borderRadius:6,border:"1px solid #e0e0dc",background:"#fff",color:s.plannedDay?"#1a1a1a":"#aaa" }}>
+                    <option value="">None</option>
+                    {DAY_LABELS.map(day=><option key={day} value={day}>{day}</option>)}
+                  </select>
+                  {s.plannedDay&&store.weekPlan?.weekGoals?.daySessions?.[s.plannedDay]&&(
+                    <span style={{ fontSize:11,color:SESSION_COLORS[store.weekPlan.weekGoals.daySessions[s.plannedDay].type]||"#888",fontWeight:600 }}>
+                      {SESSION_LABELS[store.weekPlan.weekGoals.daySessions[s.plannedDay].type]||s.plannedDay}
+                    </span>
+                  )}
+                </div>
+              )}
 
               {s.notes&&<div style={{ fontSize:13,color:"#666",margin:"6px 0 8px",padding:"8px 10px",background:"#f9f9f7",borderRadius:6 }}>{s.notes}</div>}
 
@@ -675,6 +747,18 @@ function ProgressScreen({ store }) {
           </div>
         )}
         <GoalBar label="Runs completed" actual={thisWeekRuns.length} goal={weekGoals.runsPlanned||3} unit="" higherIsBetter/>
+        {(()=>{
+          const scored = thisWeekRuns.filter(s=>s.score?.value!=null&&s.plannedDay&&getWeekStart(s.date)===weekPlan.weekStart);
+          const avg = scored.length ? scored.reduce((a,s)=>a+s.score.value,0)/scored.length : null;
+          if (avg!==null) return (
+            <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",borderRadius:8,marginTop:4,background:avg>=8?"#e8f8f0":avg>=6?"#fff8e0":"#fff0f0" }}>
+              <span style={{ fontSize:13,fontWeight:600,color:"#1a1a1a" }}>Week score ({scored.length} session{scored.length!==1?"s":""})</span>
+              <span style={{ fontSize:18,fontWeight:800,color:avg>=8?"#0F6E56":avg>=6?"#b07000":"#c00" }}>{avg.toFixed(1)}/10</span>
+            </div>
+          );
+          if (thisWeekRuns.length>0) return <div style={{ fontSize:12,color:"#aaa",marginTop:4 }}>Analyse sessions to see week score</div>;
+          return null;
+        })()}
       </div>
     );
   }
@@ -1033,8 +1117,12 @@ export default function App() {
     let updated;
     if (deleteId) { updated = sessions.filter(s=>s.id!==deleteId); }
     else {
-      const idx = sessions.findIndex(s=>s.id===session.id);
-      updated = idx>=0 ? sessions.map(s=>s.id===session.id?session:s) : [...sessions, session];
+      // Auto-link new sessions to planned day by date; preserve explicit overrides (including null)
+      const enriched = "plannedDay" in session
+        ? session
+        : { ...session, plannedDay: getPlannedDay(session.date, store.weekPlan) };
+      const idx = sessions.findIndex(s=>s.id===enriched.id);
+      updated = idx>=0 ? sessions.map(s=>s.id===enriched.id?enriched:s) : [...sessions, enriched];
     }
     persist({ sessions:updated });
     setEditingSession(null); setStravaActivities([]);
@@ -1052,16 +1140,30 @@ export default function App() {
     await run(async () => {
       const p = store.profile;
       const goalLabel = p.goal==="Custom..."?p.goalCustom:p.goal;
+      const planCtx = (() => {
+        if (!d.plannedDay || !store.weekPlan?.weekGoals) return "";
+        const planned = store.weekPlan.weekGoals.daySessions?.[d.plannedDay];
+        if (!planned) return "";
+        return `\nPlanned for ${d.plannedDay}: type=${planned.type}, mainSet="${planned.mainSet||"none"}", targetPace=${store.weekPlan.weekGoals.targetPace||"n/a"}`;
+      })();
       const r = await callClaude(SYSTEM,
         `Analyze session — ${goalLabel} in ${p.goalTime} (threshold: ${p.thresholdPace}/km):
 Type: ${d.type} | Date: ${d.date} | Location: ${d.location||"unknown"}
 Distance: ${d.distance||"unknown"}km | Elevation: ${d.elevation||"unknown"}m
 Pace: ${d.avgPace}/km | Avg HR: ${d.avgHR} | Max HR: ${d.maxHR} | Cadence: ${d.cadence} spm | TE: ${d.te} | RPE: ${d.rpe}/10
-${d.notes?`Notes: ${d.notes}`:""}
+${d.notes?`Notes: ${d.notes}`:""}${planCtx}
 Injuries: ${p.injuries.join(", ")||"none"}
-## Verdict\nOn target / Too hard / Too easy\n## Metric flags\n## Next session adjustment\n## Injury risk`);
-      saveSession({ ...d, analysis:r });
-      setAiText(r);
+## Verdict\nOn target / Too hard / Too easy\n## Metric flags\n## Next session adjustment\n## Injury risk
+After your analysis output exactly this block:
+SCORE_JSON
+{"value":<1-10>,"verdict":"<max 12 words>"}
+SCORE_JSON`);
+      const scoreMatch = r.match(/SCORE_JSON\s*(\{[\s\S]*?\})\s*SCORE_JSON/);
+      let score = null;
+      if (scoreMatch) { try { score = JSON.parse(scoreMatch[1]); } catch {} }
+      const analysis = r.replace(/SCORE_JSON[\s\S]*?SCORE_JSON/g, "").trim();
+      saveSession({ ...d, analysis, score });
+      setAiText(analysis);
     });
   }
 
