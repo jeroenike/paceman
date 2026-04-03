@@ -271,11 +271,19 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
   const goalLabel = store.profile.goal==="Custom..."?store.profile.goalCustom:store.profile.goal;
   const daysToRace = store.profile.goalDate ? Math.ceil((new Date(store.profile.goalDate)-new Date())/(1000*60*60*24)) : null;
   const weekPlan = store.weekPlan;
-  const weekStart = getCurrentWeekStart();
-  const isCurrentWeek = weekPlan?.weekStart === weekStart;
+  const weekGoals = weekPlan?.weekGoals;
+  const currentWeekStart = getCurrentWeekStart();
+  const isCurrentWeek = weekPlan?.weekStart === currentWeekStart;
+  const planWeekStart = weekPlan?.weekStart ?? currentWeekStart;
+
+  // Week date range label e.g. "31 Mar – 6 Apr"
+  const weekStartDate = new Date(planWeekStart + "T00:00:00");
+  const weekEndDate = new Date(weekStartDate); weekEndDate.setDate(weekStartDate.getDate()+6);
+  const weekRange = `${weekStartDate.toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – ${weekEndDate.toLocaleDateString("en-GB",{day:"numeric",month:"short"})}`;
 
   return (
     <div style={{ padding:"0 16px 24px",overflowY:"auto",flex:1 }}>
+      {/* Header */}
       <div style={{ padding:"20px 0 14px",borderBottom:"1px solid #f0f0ec",marginBottom:16 }}>
         <div style={{ fontSize:11,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:2 }}>This week</div>
         <div style={{ fontSize:24,fontWeight:800,color:"#1a1a1a" }}>{store.profile.name?`${store.profile.name}'s Plan`:"Training Plan"}</div>
@@ -283,34 +291,12 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
           <div style={{ fontSize:13,color:"#888",marginTop:3,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap" }}>
             <span>{goalLabel} · {store.profile.goalTime}</span>
             {daysToRace!==null&&daysToRace>0&&<span style={{ fontSize:11,padding:"2px 8px",borderRadius:6,background:"#f0f6ff",color:"#1B6FE8",fontWeight:700 }}>{daysToRace}d to go</span>}
-            {daysToRace===0&&<span style={{ fontSize:11,padding:"2px 8px",borderRadius:6,background:"#fff8e0",color:"#b07000",fontWeight:700 }}>Race day! 🏁</span>}
+            {daysToRace===0&&<span style={{ fontSize:11,padding:"2px 8px",borderRadius:6,background:"#fff8e0",color:"#b07000",fontWeight:700 }}>Race day!</span>}
           </div>
         )}
       </div>
 
-      <div style={{ display:"flex",flexDirection:"column",gap:8,marginBottom:18 }}>
-        {DAY_LABELS.map(day=>{
-          const type=store.profile.schedule?.[day]||"rest";
-          const isToday=day===today;
-          const color=SESSION_COLORS[type];
-          const isRun=type.startsWith("run");
-          const dayGoal = weekPlan?.dayGoals?.[day];
-          return (
-            <button key={day} onClick={()=>isRun&&onSessionTap(day)}
-              style={{ display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:10,background:isToday?"#f0f6ff":"#fff",border:isToday?`2px solid ${color}`:"1px solid #eee",cursor:isRun?"pointer":"default",textAlign:"left",width:"100%" }}>
-              <div style={{ width:8,height:8,borderRadius:"50%",background:color,flexShrink:0 }}/>
-              <span style={{ fontSize:12,fontWeight:700,width:32,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.05em" }}>{day}</span>
-              <div style={{ flex:1 }}>
-                <div style={{ fontSize:14,color:"#1a1a1a",fontWeight:isToday?700:400 }}>{SESSION_LABELS[type]}</div>
-                {dayGoal&&<div style={{ fontSize:11,color:"#888",marginTop:1 }}>{dayGoal}</div>}
-              </div>
-              {isToday&&<span style={{ fontSize:10,color,fontWeight:800,letterSpacing:"0.06em" }}>TODAY</span>}
-              {isRun&&<span style={{ fontSize:20,color:"#ddd" }}>›</span>}
-            </button>
-          );
-        })}
-      </div>
-
+      {/* Generate button */}
       {!hasProfile?(
         <div style={{ padding:16,borderRadius:10,background:"#fff8f0",border:"1px solid #fcd0b0",marginBottom:14 }}>
           <div style={{ fontSize:13,color:"#c04a00",fontWeight:700,marginBottom:4 }}>Set up your profile first</div>
@@ -319,30 +305,42 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
         </div>
       ):(
         <button onClick={onGeneratePlan} disabled={loading}
-          style={{ width:"100%",padding:14,borderRadius:10,background:loading?"#ccc":"#1B6FE8",color:"white",border:"none",fontSize:15,fontWeight:700,cursor:loading?"default":"pointer",marginBottom:10 }}>
+          style={{ width:"100%",padding:14,borderRadius:10,background:loading?"#ccc":"#1B6FE8",color:"white",border:"none",fontSize:15,fontWeight:700,cursor:loading?"default":"pointer",marginBottom:12 }}>
           {loading?"Generating...":isCurrentWeek?"Regenerate Week Plan":"Generate Week Plan"}
         </button>
       )}
 
-      <ErrorBox message={error}/>
-      {loading&&!weekPlan&&<Dots/>}
-      {weekPlan&&(
-        <div>
-          <div style={{ fontSize:11,color:"#aaa",marginBottom:4 }}>Generated {new Date(weekPlan.generated).toLocaleDateString()}</div>
-          <WeekPlanGrid weekGoals={weekPlan.weekGoals} today={today} schedule={store.profile.schedule} weekStart={weekPlan.weekStart}/>
+      {/* Week summary strip */}
+      {weekGoals&&(
+        <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap" }}>
+          {weekGoals.totalDistance&&<Chip label={`${weekGoals.totalDistance} km`} color="#1B6FE8"/>}
+          {weekGoals.runsPlanned&&<Chip label={`${weekGoals.runsPlanned} runs`} color="#0F6E56"/>}
+          <span style={{ fontSize:11,color:"#bbb",marginLeft:"auto" }}>{weekRange}</span>
         </div>
       )}
+
+      <ErrorBox message={error}/>
+      {loading&&<Dots/>}
+
+      {/* Unified day list */}
+      <WeekDayList
+        schedule={store.profile.schedule}
+        daySessions={weekGoals?.daySessions}
+        today={today}
+        weekStart={planWeekStart}
+        onSessionTap={onSessionTap}
+      />
     </div>
   );
 }
 
-// ── Week Plan Grid ──
+// ── Week Day List ──
 
-function WeekPlanGrid({ weekGoals, today, schedule, weekStart }) {
-  const daySessions = weekGoals?.daySessions;
+function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap }) {
+  const [expandedDay, setExpandedDay] = useState(null);
   const weekStartDate = new Date(weekStart + "T00:00:00");
   return (
-    <div style={{ display:"flex",flexDirection:"column",gap:8,marginTop:8 }}>
+    <div style={{ display:"flex",flexDirection:"column",gap:6 }}>
       {DAY_LABELS.map((day, i) => {
         const session = daySessions?.[day];
         const type = session?.type || schedule?.[day] || "rest";
@@ -350,20 +348,44 @@ function WeekPlanGrid({ weekGoals, today, schedule, weekStart }) {
         const color = SESSION_COLORS[type] || "#888780";
         const label = SESSION_LABELS[type] || type;
         const isToday = day === today;
+        const isExpanded = expandedDay === day;
+        const isRun = type.startsWith("run");
         const dayDate = new Date(weekStartDate);
         dayDate.setDate(weekStartDate.getDate() + i);
         const dateStr = dayDate.toLocaleDateString("en-GB", { day:"numeric", month:"short" });
         return (
-          <div key={day} style={{ borderRadius:10, background:isToday?"#f0f6ff":"#fff", border:isToday?`1px solid ${color}`:"1px solid #eee", overflow:"hidden", display:"flex" }}>
+          <div key={day}
+            onClick={() => setExpandedDay(isExpanded ? null : day)}
+            style={{ borderRadius:10, overflow:"hidden", display:"flex", background:isToday?"#f0f6ff":"#fff", border:isToday?`1px solid ${color}`:"1px solid #eee", cursor:"pointer" }}>
             <div style={{ width:4, background:color, flexShrink:0 }}/>
             <div style={{ flex:1, padding:"11px 14px" }}>
-              <div style={{ display:"flex",alignItems:"center",gap:6,marginBottom:mainSet?5:0 }}>
+              <div style={{ display:"flex",alignItems:"center",gap:6 }}>
                 <span style={{ fontSize:12,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.05em",width:28 }}>{day}</span>
                 <span style={{ fontSize:11,color:"#bbb" }}>{dateStr}</span>
                 <span style={{ marginLeft:"auto",fontSize:11,fontWeight:700,color,background:`${color}18`,padding:"2px 8px",borderRadius:20 }}>{label}</span>
                 {isToday&&<span style={{ fontSize:10,color,fontWeight:800,letterSpacing:"0.06em" }}>TODAY</span>}
+                <span style={{ fontSize:13,color:"#ccc",marginLeft:2,transition:"transform 0.15s",display:"inline-block",transform:isExpanded?"rotate(90deg)":"none" }}>›</span>
               </div>
-              {mainSet&&<div style={{ fontSize:13,color:"#333",lineHeight:1.55 }}>{mainSet}</div>}
+              {/* Collapsed preview */}
+              {!isExpanded&&mainSet&&(
+                <div style={{ fontSize:12,color:"#aaa",marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{mainSet}</div>
+              )}
+              {/* Expanded detail */}
+              {isExpanded&&(
+                <div style={{ marginTop:10 }}>
+                  {mainSet
+                    ? <div style={{ fontSize:13,color:"#333",lineHeight:1.65 }}>{mainSet}</div>
+                    : <div style={{ fontSize:12,color:"#bbb",fontStyle:"italic" }}>No training details for this day.</div>
+                  }
+                  {isRun&&(
+                    <button
+                      onClick={e=>{ e.stopPropagation(); onSessionTap(day); }}
+                      style={{ marginTop:12,padding:"7px 14px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE833",fontSize:13,fontWeight:600,cursor:"pointer" }}>
+                      Session detail →
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         );
