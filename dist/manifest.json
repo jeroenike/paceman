@@ -1,0 +1,13 @@
+{
+  "name": "Paceman",
+  "short_name": "Paceman",
+  "description": "Data-driven running coach",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1B6FE8",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
