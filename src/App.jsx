@@ -41,6 +41,30 @@ function getPlannedDay(sessionDate, weekPlan) {
   const d = new Date(sessionDate + "T00:00:00");
   return DAY_LABELS[d.getDay() === 0 ? 6 : d.getDay() - 1];
 }
+function getAutoLink(sessionDate, weekPlans) {
+  if (!sessionDate || !weekPlans?.length) return null;
+  const sessionWeekStart = getWeekStart(sessionDate);
+  const plan = weekPlans.find(p => p.weekStart === sessionWeekStart);
+  if (!plan) return null;
+  const d = new Date(sessionDate + "T00:00:00");
+  return { plannedDay: DAY_LABELS[d.getDay() === 0 ? 6 : d.getDay() - 1], plannedWeekStart: sessionWeekStart };
+}
+function computeAutoScore(session, weekPlan) {
+  let paceScore = null;
+  const tSecs = parsePace(weekPlan?.weekGoals?.targetPace);
+  const aSecs = parsePace(session.avgPace);
+  if (tSecs && aSecs) {
+    const delta = aSecs - tSecs;
+    paceScore = delta <= -30 ? 7 : delta <= -10 ? 9 : delta <= 10 ? 10 : delta <= 30 ? 8 : delta <= 60 ? 6 : delta <= 120 ? 4 : 2;
+  }
+  let rpeScore = null;
+  const rpe = Number(session.rpe);
+  if (rpe) { const m = {1:3,2:4,3:5,4:5,5:6,6:8,7:9,8:7,9:5,10:3}; rpeScore = m[rpe] ?? null; }
+  if (paceScore !== null && rpeScore !== null) return { value: Math.round((paceScore+rpeScore)/2), verdict:"Auto: pace + RPE" };
+  if (paceScore !== null) return { value: paceScore, verdict:"Auto: pace" };
+  if (rpeScore !== null) return { value: rpeScore, verdict:"Auto: RPE" };
+  return null;
+}
 
 async function callClaude(system, user) {
   const res = await fetch("/api/claude", {
@@ -271,27 +295,64 @@ function LogForm({ initial, onSave, onCancel, stravaActivities, onImportStrava, 
   );
 }
 
+// ── Week Strip ──
+
+function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate }) {
+  const weeks = [];
+  const cur = new Date(getCurrentWeekStart() + "T00:00:00");
+  const from = new Date(cur); from.setDate(from.getDate() - 42);
+  const to = new Date(cur); to.setDate(to.getDate() + 56);
+  if (raceDate) { const rd = new Date(raceDate + "T00:00:00"); if (rd < to) { to.setTime(rd.getTime()); } }
+  for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 7)) weeks.push(getWeekStart(d));
+  return (
+    <div style={{ display:"flex",gap:6,overflowX:"auto",padding:"4px 0 10px",scrollbarWidth:"none",WebkitOverflowScrolling:"touch" }}>
+      {weeks.map(ws=>{
+        const hasPlan = (weekPlans||[]).some(p=>p.weekStart===ws);
+        const hasSessions = (sessions||[]).some(s=>s.plannedWeekStart===ws||getWeekStart(s.date)===ws);
+        const isActive = ws===activeWeekStart;
+        const label = new Date(ws+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"});
+        return (
+          <button key={ws} onClick={()=>onSelect(ws)}
+            style={{ flexShrink:0,padding:"5px 9px",borderRadius:8,border:`1.5px solid ${isActive?"#1B6FE8":"#eee"}`,background:isActive?"#f0f6ff":"#fff",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3 }}>
+            <span style={{ fontSize:11,fontWeight:isActive?700:400,color:isActive?"#1B6FE8":"#888",whiteSpace:"nowrap" }}>{label}</span>
+            <div style={{ display:"flex",gap:2,alignItems:"center" }}>
+              <div style={{ width:6,height:6,borderRadius:"50%",background:hasPlan?"#1B6FE8":"transparent",border:hasPlan?"none":"1.5px solid #ddd" }}/>
+              {hasSessions&&<div style={{ width:6,height:6,borderRadius:"50%",background:"#0F6E56" }}/>}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Home Screen ──
 
 function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, onSessionTap, onGoProfile }) {
+  const [activeWeekStart, setActiveWeekStart] = useState(getCurrentWeekStart);
   const goalLabel = store.profile.goal==="Custom..."?store.profile.goalCustom:store.profile.goal;
   const daysToRace = store.profile.goalDate ? Math.ceil((new Date(store.profile.goalDate)-new Date())/(1000*60*60*24)) : null;
-  const weekPlan = store.weekPlan;
-  const weekGoals = weekPlan?.weekGoals;
-  const currentWeekStart = getCurrentWeekStart();
-  const isCurrentWeek = weekPlan?.weekStart === currentWeekStart;
-  const planWeekStart = weekPlan?.weekStart ?? currentWeekStart;
 
-  // Week date range label e.g. "31 Mar – 6 Apr"
-  const weekStartDate = new Date(planWeekStart + "T00:00:00");
+  const activePlan = (store.weekPlans||[]).find(p=>p.weekStart===activeWeekStart)??null;
+  const weekGoals = activePlan?.weekGoals;
+  const hasPlan = !!activePlan;
+
+  // Week date range label
+  const weekStartDate = new Date(activeWeekStart+"T00:00:00");
   const weekEndDate = new Date(weekStartDate); weekEndDate.setDate(weekStartDate.getDate()+6);
   const weekRange = `${weekStartDate.toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – ${weekEndDate.toLocaleDateString("en-GB",{day:"numeric",month:"short"})}`;
+
+  function shiftWeek(dir) {
+    const d = new Date(activeWeekStart+"T00:00:00");
+    d.setDate(d.getDate()+dir*7);
+    setActiveWeekStart(getWeekStart(d));
+  }
 
   return (
     <div style={{ padding:"0 16px 24px",overflowY:"auto",flex:1 }}>
       {/* Header */}
-      <div style={{ padding:"20px 0 14px",borderBottom:"1px solid #f0f0ec",marginBottom:16 }}>
-        <div style={{ fontSize:11,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:2 }}>This week</div>
+      <div style={{ padding:"20px 0 10px",borderBottom:"1px solid #f0f0ec",marginBottom:10 }}>
+        <div style={{ fontSize:11,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:2 }}>Training Plan</div>
         <div style={{ fontSize:24,fontWeight:800,color:"#1a1a1a" }}>{store.profile.name?`${store.profile.name}'s Plan`:"Training Plan"}</div>
         {goalLabel&&(
           <div style={{ fontSize:13,color:"#888",marginTop:3,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap" }}>
@@ -302,6 +363,16 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
         )}
       </div>
 
+      {/* Week strip */}
+      <WeekStrip weekPlans={store.weekPlans} sessions={store.sessions} activeWeekStart={activeWeekStart} onSelect={setActiveWeekStart} raceDate={store.profile.goalDate}/>
+
+      {/* Arrow nav + week label */}
+      <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12 }}>
+        <button onClick={()=>shiftWeek(-1)} style={{ padding:"6px 12px",borderRadius:8,background:"none",border:"1px solid #eee",color:"#888",fontSize:14,cursor:"pointer" }}>‹</button>
+        <span style={{ fontSize:13,fontWeight:600,color:"#1a1a1a" }}>{weekRange}</span>
+        <button onClick={()=>shiftWeek(1)} style={{ padding:"6px 12px",borderRadius:8,background:"none",border:"1px solid #eee",color:"#888",fontSize:14,cursor:"pointer" }}>›</button>
+      </div>
+
       {/* Generate button */}
       {!hasProfile?(
         <div style={{ padding:16,borderRadius:10,background:"#fff8f0",border:"1px solid #fcd0b0",marginBottom:14 }}>
@@ -310,9 +381,9 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
           <button onClick={onGoProfile} style={{ padding:"8px 16px",borderRadius:8,background:"#1B6FE8",color:"white",border:"none",fontSize:13,fontWeight:700,cursor:"pointer" }}>Go to Profile →</button>
         </div>
       ):(
-        <button onClick={onGeneratePlan} disabled={loading}
+        <button onClick={()=>onGeneratePlan(activeWeekStart)} disabled={loading}
           style={{ width:"100%",padding:14,borderRadius:10,background:loading?"#ccc":"#1B6FE8",color:"white",border:"none",fontSize:15,fontWeight:700,cursor:loading?"default":"pointer",marginBottom:12 }}>
-          {loading?"Generating...":isCurrentWeek?"Regenerate Week Plan":"Generate Week Plan"}
+          {loading?"Generating...":hasPlan?"Regenerate Week Plan":"Generate Week Plan"}
         </button>
       )}
 
@@ -321,7 +392,6 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
         <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap" }}>
           {weekGoals.totalDistance&&<Chip label={`${weekGoals.totalDistance} km`} color="#1B6FE8"/>}
           {weekGoals.runsPlanned&&<Chip label={`${weekGoals.runsPlanned} runs`} color="#0F6E56"/>}
-          <span style={{ fontSize:11,color:"#bbb",marginLeft:"auto" }}>{weekRange}</span>
         </div>
       )}
 
@@ -333,10 +403,10 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
         schedule={store.profile.schedule}
         daySessions={weekGoals?.daySessions}
         today={today}
-        weekStart={planWeekStart}
+        weekStart={activeWeekStart}
         onSessionTap={onSessionTap}
         sessions={store.sessions}
-        weekPlan={store.weekPlan}
+        weekPlan={activePlan}
       />
     </div>
   );
@@ -362,7 +432,7 @@ function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, se
         dayDate.setDate(weekStartDate.getDate() + i);
         const dateStr = dayDate.toLocaleDateString("en-GB", { day:"numeric", month:"short" });
         // Find session linked to this planned day
-        const linked = sessions?.find(s => s.plannedDay === day && weekPlan?.weekStart && getWeekStart(s.date) === weekPlan.weekStart);
+        const linked = sessions?.find(s => s.plannedDay === day && s.plannedWeekStart === weekPlan?.weekStart);
         return (
           <div key={day}
             onClick={() => setExpandedDay(isExpanded ? null : day)}
@@ -549,7 +619,7 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
                     <div style={{ width:7,height:7,borderRadius:"50%",background:SESSION_COLORS[s.type]||"#888",flexShrink:0 }}/>
                     <span style={{ fontSize:14,fontWeight:700,color:"#1a1a1a" }}>{SESSION_LABELS[s.type]||s.type}</span>
                     {s.stravaId&&<span style={{ fontSize:10,padding:"2px 6px",borderRadius:4,background:"#FC4C0222",color:"#FC4C02",fontWeight:700 }}>Strava</span>}
-                    {s.plannedDay&&<Chip label={`Plan: ${s.plannedDay}`} color={SESSION_COLORS[store.weekPlan?.weekGoals?.daySessions?.[s.plannedDay]?.type]||"#888780"}/>}
+                    {s.plannedDay&&s.plannedWeekStart&&(()=>{const p=(store.weekPlans||[]).find(p=>p.weekStart===s.plannedWeekStart);const t=p?.weekGoals?.daySessions?.[s.plannedDay]?.type;return <Chip label={`Plan: ${s.plannedDay}`} color={SESSION_COLORS[t]||"#888780"}/>;})()}
                   </div>
                   <div style={{ fontSize:12,color:"#aaa" }}>
                     {s.date}{s.time?` · ${s.time}`:""}{s.location?` · ${s.location}`:""}
@@ -571,19 +641,34 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
                 {s.te&&<span>· TE {s.te}</span>}
               </div>
 
-              {store.weekPlan&&(
-                <div style={{ display:"flex",alignItems:"center",gap:8,margin:"6px 0 2px",flexWrap:"wrap" }}>
-                  <span style={{ fontSize:11,color:"#aaa",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em" }}>Link</span>
-                  <select value={s.plannedDay||""} onChange={e=>{ e.stopPropagation(); onSaveSession({...s,plannedDay:e.target.value||null}); }} onClick={e=>e.stopPropagation()}
-                    style={{ fontSize:12,padding:"3px 6px",borderRadius:6,border:"1px solid #e0e0dc",background:"#fff",color:s.plannedDay?"#1a1a1a":"#aaa" }}>
-                    <option value="">None</option>
-                    {DAY_LABELS.map(day=><option key={day} value={day}>{day}</option>)}
+              {(store.weekPlans||[]).length>0&&(
+                <div style={{ margin:"6px 0 2px" }}>
+                  <span style={{ fontSize:11,color:"#aaa",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em" }}>Link to plan</span>
+                  <select
+                    value={s.plannedWeekStart&&s.plannedDay?`${s.plannedWeekStart}:${s.plannedDay}`:""}
+                    onChange={e=>{ e.stopPropagation(); if(!e.target.value){onSaveSession({...s,plannedDay:null,plannedWeekStart:null,score:null});}else{const[ws,day]=e.target.value.split(":");onSaveSession({...s,plannedDay:day,plannedWeekStart:ws});} }}
+                    onClick={e=>e.stopPropagation()}
+                    style={{ display:"block",width:"100%",marginTop:4,fontSize:12,padding:"5px 8px",borderRadius:6,border:"1px solid #e0e0dc",background:"#fff" }}>
+                    <option value="">Not linked</option>
+                    {[...(store.weekPlans||[])].sort((a,b)=>b.weekStart.localeCompare(a.weekStart)).map(plan=>{
+                      const ws=plan.weekStart;
+                      const endDate=new Date(ws+"T00:00:00"); endDate.setDate(endDate.getDate()+6);
+                      const range=`${new Date(ws+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – ${endDate.toLocaleDateString("en-GB",{day:"numeric",month:"short"})}`;
+                      const runDays=DAY_LABELS.filter(d=>{const t=plan.weekGoals?.daySessions?.[d]?.type;return t&&t!=="rest"&&t!=="crossfit";});
+                      if(!runDays.length) return null;
+                      return (
+                        <optgroup key={ws} label={`Week of ${range}`}>
+                          {runDays.map(day=>{
+                            const ds=plan.weekGoals.daySessions[day];
+                            const dayDate=new Date(ws+"T00:00:00"); dayDate.setDate(dayDate.getDate()+DAY_LABELS.indexOf(day));
+                            const dateStr=dayDate.toLocaleDateString("en-GB",{day:"numeric",month:"short"});
+                            const preview=ds.mainSet?ds.mainSet.slice(0,35)+(ds.mainSet.length>35?"…":""):"";
+                            return <option key={`${ws}:${day}`} value={`${ws}:${day}`}>{day} {dateStr} — {SESSION_LABELS[ds.type]||ds.type}{preview?` — ${preview}`:""}</option>;
+                          })}
+                        </optgroup>
+                      );
+                    })}
                   </select>
-                  {s.plannedDay&&store.weekPlan?.weekGoals?.daySessions?.[s.plannedDay]&&(
-                    <span style={{ fontSize:11,color:SESSION_COLORS[store.weekPlan.weekGoals.daySessions[s.plannedDay].type]||"#888",fontWeight:600 }}>
-                      {SESSION_LABELS[store.weekPlan.weekGoals.daySessions[s.plannedDay].type]||s.plannedDay}
-                    </span>
-                  )}
                 </div>
               )}
 
@@ -643,9 +728,9 @@ function ProgressScreen({ store }) {
   const runSessions = allSessions.filter(s=>s.type&&s.type.startsWith("run"));
 
   const weekStart = getCurrentWeekStart();
-  const weekPlan = store.weekPlan;
+  const weekPlan = (store.weekPlans||[]).find(p=>p.weekStart===weekStart)??null;
   const weekGoals = weekPlan?.weekGoals;
-  const isCurrentWeekPlan = weekPlan?.weekStart===weekStart;
+  const isCurrentWeekPlan = !!weekPlan;
 
   const thisWeekRuns = runSessions.filter(s=>getWeekStart(s.date)===weekStart);
   const recentRuns = runSessions.slice(-10);
@@ -748,7 +833,7 @@ function ProgressScreen({ store }) {
         )}
         <GoalBar label="Runs completed" actual={thisWeekRuns.length} goal={weekGoals.runsPlanned||3} unit="" higherIsBetter/>
         {(()=>{
-          const scored = thisWeekRuns.filter(s=>s.score?.value!=null&&s.plannedDay&&getWeekStart(s.date)===weekPlan.weekStart);
+          const scored = thisWeekRuns.filter(s=>s.score?.value!=null&&s.plannedWeekStart===weekStart);
           const avg = scored.length ? scored.reduce((a,s)=>a+s.score.value,0)/scored.length : null;
           if (avg!==null) return (
             <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",borderRadius:8,marginTop:4,background:avg>=8?"#e8f8f0":avg>=6?"#fff8e0":"#fff0f0" }}>
@@ -1032,7 +1117,7 @@ function ProfileScreen({ store, persist, onSaved }) {
           Save Profile
         </button>
         {store.sessions?.length>0&&(
-          <button onClick={()=>{ if(window.confirm("Clear all session history?")) persist({sessions:[],weekPlan:null}); }}
+          <button onClick={()=>{ if(window.confirm("Clear all session history?")) persist({sessions:[],weekPlans:[]}); }}
             style={{ padding:12,borderRadius:10,background:"none",color:"#c00",border:"1px solid #fcc",fontSize:14,cursor:"pointer" }}>
             Clear history
           </button>
@@ -1063,9 +1148,13 @@ function NavBar({ screen, onNav }) {
 
 export default function App() {
   const [store, setStore] = useState(()=>{
-    const s = { profile:defaultProfile, sessions:[], weekPlan:null, strava:null, ...loadStore() };
-    // Strip legacy content field so old stored plans don't render as raw markdown
-    if (s.weekPlan?.content) { const { content:_, ...rest } = s.weekPlan; s.weekPlan = rest; }
+    const s = { profile:defaultProfile, sessions:[], weekPlans:[], strava:null, ...loadStore() };
+    // Migrate legacy single weekPlan → weekPlans array
+    if (s.weekPlan && !(s.weekPlans?.length)) s.weekPlans = [s.weekPlan];
+    if (!s.weekPlans) s.weekPlans = [];
+    delete s.weekPlan;
+    // Strip legacy content fields
+    s.weekPlans = s.weekPlans.map(p => { const { content:_, ...r } = p; return r; });
     return s;
   });
   const [screen, setScreen] = useState("home");
@@ -1117,10 +1206,18 @@ export default function App() {
     let updated;
     if (deleteId) { updated = sessions.filter(s=>s.id!==deleteId); }
     else {
-      // Auto-link new sessions to planned day by date; preserve explicit overrides (including null)
-      const enriched = "plannedDay" in session
-        ? session
-        : { ...session, plannedDay: getPlannedDay(session.date, store.weekPlan) };
+      let enriched = session;
+      // Auto-link new sessions; preserve explicit overrides (plannedDay already present)
+      if (!("plannedDay" in session)) {
+        const link = getAutoLink(session.date, store.weekPlans);
+        enriched = link ? { ...session, ...link } : { ...session, plannedDay:null, plannedWeekStart:null };
+      }
+      // Auto-score: fires when linked and no Claude score exists
+      if (enriched.plannedDay && enriched.plannedWeekStart && !enriched.score?.verdict?.startsWith("Claude")) {
+        const plan = (store.weekPlans||[]).find(p=>p.weekStart===enriched.plannedWeekStart);
+        const autoScore = computeAutoScore(enriched, plan);
+        if (autoScore) enriched = { ...enriched, score:autoScore };
+      }
       const idx = sessions.findIndex(s=>s.id===enriched.id);
       updated = idx>=0 ? sessions.map(s=>s.id===enriched.id?enriched:s) : [...sessions, enriched];
     }
@@ -1141,10 +1238,11 @@ export default function App() {
       const p = store.profile;
       const goalLabel = p.goal==="Custom..."?p.goalCustom:p.goal;
       const planCtx = (() => {
-        if (!d.plannedDay || !store.weekPlan?.weekGoals) return "";
-        const planned = store.weekPlan.weekGoals.daySessions?.[d.plannedDay];
+        if (!d.plannedDay || !d.plannedWeekStart) return "";
+        const plan = (store.weekPlans||[]).find(p=>p.weekStart===d.plannedWeekStart);
+        const planned = plan?.weekGoals?.daySessions?.[d.plannedDay];
         if (!planned) return "";
-        return `\nPlanned for ${d.plannedDay}: type=${planned.type}, mainSet="${planned.mainSet||"none"}", targetPace=${store.weekPlan.weekGoals.targetPace||"n/a"}`;
+        return `\nPlanned for ${d.plannedDay}: type=${planned.type}, mainSet="${planned.mainSet||"none"}", targetPace=${plan.weekGoals.targetPace||"n/a"}`;
       })();
       const r = await callClaude(SYSTEM,
         `Analyze session — ${goalLabel} in ${p.goalTime} (threshold: ${p.thresholdPace}/km):
@@ -1156,7 +1254,7 @@ Injuries: ${p.injuries.join(", ")||"none"}
 ## Verdict\nOn target / Too hard / Too easy\n## Metric flags\n## Next session adjustment\n## Injury risk
 After your analysis output exactly this block:
 SCORE_JSON
-{"value":<1-10>,"verdict":"<max 12 words>"}
+{"value":<1-10>,"verdict":"Claude: <max 10 words>"}
 SCORE_JSON`);
       const scoreMatch = r.match(/SCORE_JSON\s*(\{[\s\S]*?\})\s*SCORE_JSON/);
       let score = null;
@@ -1167,11 +1265,10 @@ SCORE_JSON`);
     });
   }
 
-  async function generateWeekPlan() {
+  async function generateWeekPlan(weekStart) {
     await run(async () => {
       const p = store.profile;
       const goalLabel = p.goal==="Custom..."?p.goalCustom:p.goal;
-      const weekStart = getCurrentWeekStart();
 
       const recentSessions = (store.sessions||[])
         .sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5)
@@ -1230,7 +1327,9 @@ mainSet: null for rest/crossfit, otherwise 1–2 sentences with concrete targets
       const candidate = delimMatch?.[1] ?? fenceMatch?.[1] ?? rawMatch?.[0] ?? null;
       if (candidate) { try { weekGoals = JSON.parse(candidate); } catch(e) {} }
 
-      persist({ weekPlan:{ weekGoals, weekStart, generated:new Date().toISOString() } });
+      const newPlan = { weekGoals, weekStart, generated:new Date().toISOString() };
+      const existing = store.weekPlans||[];
+      persist({ weekPlans:[...existing.filter(p=>p.weekStart!==weekStart), newPlan].sort((a,b)=>a.weekStart.localeCompare(b.weekStart)) });
     });
   }
 
