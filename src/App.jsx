@@ -366,9 +366,70 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
   );
 }
 
+// ── Week Schedule Editor ──
+
+function WeekScheduleEditor({ weekStart, profile, weekScheduleOverrides, onSave }) {
+  const [pickerDay, setPickerDay] = useState(null);
+  const baseSchedule = { ...defaultProfile.schedule, ...(profile.schedule||{}) };
+  const effective = weekScheduleOverrides[weekStart] || baseSchedule;
+  const hasOverride = !!weekScheduleOverrides[weekStart];
+
+  function setDayType(day, type) {
+    const updated = { ...(weekScheduleOverrides[weekStart] || baseSchedule), [day]: type };
+    onSave(weekStart, updated);
+    setPickerDay(null);
+  }
+
+  function resetToProfile() {
+    onSave(weekStart, null);
+  }
+
+  return (
+    <div style={{ marginBottom:12 }}>
+      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6 }}>
+        <span style={{ fontSize:11,color:"#999",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em" }}>Week Schedule</span>
+        {hasOverride&&(
+          <button onClick={resetToProfile} style={{ fontSize:11,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>
+            Reset to profile
+          </button>
+        )}
+      </div>
+      <div style={{ display:"flex",gap:4 }}>
+        {DAY_LABELS.map(day=>{
+          const type = effective[day];
+          const color = SESSION_COLORS[type]||"#888";
+          const isOpen = pickerDay===day;
+          return (
+            <button key={day} onClick={()=>setPickerDay(isOpen?null:day)}
+              style={{ flex:1,padding:"6px 2px",borderRadius:8,border:`2px solid ${color}`,
+                background:isOpen?color:"transparent",color:isOpen?"#fff":color,
+                fontSize:10,fontWeight:700,cursor:"pointer",textAlign:"center",lineHeight:1.4 }}>
+              {day}<br/>
+              <span style={{ fontWeight:400,fontSize:9 }}>{SESSION_LABELS[type]?.split(" ")[0]??type}</span>
+            </button>
+          );
+        })}
+      </div>
+      {pickerDay&&(
+        <div style={{ marginTop:8,background:"#f5f5f5",borderRadius:10,padding:10,display:"flex",flexWrap:"wrap",gap:6 }}>
+          {SESSION_TYPES.map(t=>(
+            <button key={t} onClick={()=>setDayType(pickerDay,t)}
+              style={{ padding:"6px 12px",borderRadius:16,border:"none",
+                background:effective[pickerDay]===t?SESSION_COLORS[t]:"#e0e0e0",
+                color:effective[pickerDay]===t?"#fff":"#333",
+                fontSize:12,fontWeight:600,cursor:"pointer" }}>
+              {SESSION_LABELS[t]}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Home Screen ──
 
-function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, onSessionTap, onGoProfile }) {
+function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, onSessionTap, onGoProfile, onSaveScheduleOverride }) {
   const [activeWeekStart, setActiveWeekStart] = useState(getCurrentWeekStart);
   const goalLabel = store.profile.goal==="Custom..."?store.profile.goalCustom:store.profile.goal;
   const daysToRace = store.profile.goalDate ? Math.ceil((new Date(store.profile.goalDate)-new Date())/(1000*60*60*24)) : null;
@@ -413,6 +474,16 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
         <span style={{ fontSize:13,fontWeight:600,color:"#1a1a1a" }}>{weekRange}</span>
         <button onClick={()=>shiftWeek(1)} style={{ padding:"6px 12px",borderRadius:8,background:"none",border:"1px solid #eee",color:"#888",fontSize:14,cursor:"pointer" }}>›</button>
       </div>
+
+      {/* Week schedule customizer */}
+      {hasProfile&&(
+        <WeekScheduleEditor
+          weekStart={activeWeekStart}
+          profile={store.profile}
+          weekScheduleOverrides={store.weekScheduleOverrides||{}}
+          onSave={onSaveScheduleOverride}
+        />
+      )}
 
       {/* Generate button */}
       {!hasProfile?(
@@ -1298,13 +1369,14 @@ function NavBar({ screen, onNav }) {
 
 export default function App() {
   const [store, setStore] = useState(()=>{
-    const s = { profile:defaultProfile, sessions:[], weekPlans:[], strava:null, ...loadStore() };
+    const s = { profile:defaultProfile, sessions:[], weekPlans:[], strava:null, weekScheduleOverrides:{}, ...loadStore() };
     // Migrate legacy single weekPlan → weekPlans array
     if (s.weekPlan && !(s.weekPlans?.length)) s.weekPlans = [s.weekPlan];
     if (!s.weekPlans) s.weekPlans = [];
     delete s.weekPlan;
     // Strip legacy content fields
     s.weekPlans = s.weekPlans.map(p => { const { content:_, ...r } = p; return r; });
+    if (!s.weekScheduleOverrides) s.weekScheduleOverrides = {};
     return s;
   });
   const [screen, setScreen] = useState("home");
@@ -1419,6 +1491,7 @@ SCORE_JSON`);
     await run(async () => {
       const p = store.profile;
       const goalLabel = p.goal==="Custom..."?p.goalCustom:p.goal;
+      const effectiveSchedule = (store.weekScheduleOverrides||{})[weekStart] || p.schedule;
 
       const recentSessions = (store.sessions||[])
         .sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5)
@@ -1430,7 +1503,7 @@ Athlete profile:
 - Goal: ${goalLabel} in ${p.goalTime}${p.goalDate?` on ${p.goalDate}`:""}
 - Level: ${p.experience}
 - Threshold pace: ${p.thresholdPace}/km | Race pace: ${p.racePace}/km | Long run pace: ${p.longRunPace}/km | Easy HR: ${p.easyHR} bpm
-- Schedule: ${JSON.stringify(p.schedule)}
+- Schedule (FIXED — you MUST use exactly these session types per day in daySessions, no deviations): ${JSON.stringify(effectiveSchedule)}
 - Injuries: ${p.injuries.join(", ")||"none"}
 
 Recent logged sessions:
@@ -1465,6 +1538,7 @@ WEEKGOALS_JSON
 WEEKGOALS_JSON
 
 session_type must be one of: rest, run_threshold, run_easy, run_long, crossfit, run_interval.
+Each day's type in daySessions MUST exactly match the Schedule above — do not change or swap them.
 mainSet: null for rest/crossfit, otherwise 1–2 sentences with concrete targets (reps, pace, HR, rest).`;
 
       const r = await callClaude("You are a running coach AI. Respond with valid JSON only — no markdown, no prose, no commentary.", prompt);
@@ -1511,7 +1585,7 @@ Include: exact paces, HR zones (bpm), cadence targets, rep structure, rest.`);
   return (
     <div style={{ maxWidth:430,margin:"0 auto",minHeight:"100vh",display:"flex",flexDirection:"column",background:"#fff" }}>
       <div style={{ flex:1,overflowY:"auto",display:"flex",flexDirection:"column" }}>
-        {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onSessionTap={getSessionDetail} onGoProfile={()=>setScreen("profile")}/>}
+        {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onSessionTap={getSessionDetail} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={(weekStart,scheduleOrNull)=>{ const u={...(store.weekScheduleOverrides||{})}; if(scheduleOrNull===null){delete u[weekStart];}else{u[weekStart]=scheduleOrNull;} persist({weekScheduleOverrides:u}); }}/>}
         {screen==="session"&&<SessionScreen store={store} activeDay={activeDay} loading={loading} error={error} aiText={aiText} onBack={()=>{ setScreen("home"); setAiText(""); setActiveDay(null); }}/>}
         {screen==="log"&&<LogScreen store={store} loading={loading} error={error} aiText={aiText} stravaLoading={stravaLoading} stravaActivities={stravaActivities} onImportStrava={importFromStrava} onSaveSession={saveSession} onBulkSave={bulkSaveSessions} onAnalyze={analyzeSession} editingSession={editingSession} setEditingSession={setEditingSession}/>}
         {screen==="progress"&&<ProgressScreen store={store}/>}
