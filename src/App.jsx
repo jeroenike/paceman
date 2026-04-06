@@ -27,6 +27,18 @@ function secsTopace(secs) {
   const m = Math.floor(secs/60), s = Math.round(secs%60);
   return `${m}:${String(s).padStart(2,"0")}`;
 }
+const RACE_DISTANCES = { "5km":5, "10km":10, "15km":15, "Half Marathon":21.0975, "Marathon":42.195 };
+function computeRacePace(goal, goalTime) {
+  const dist = RACE_DISTANCES[goal];
+  if (!dist || !goalTime) return null;
+  const parts = goalTime.split(":").map(Number);
+  let secs;
+  if (parts.length===3) secs = parts[0]*3600+parts[1]*60+(parts[2]||0);
+  else if (parts.length===2) secs = parts[0]*60+(parts[1]||0);
+  else return null;
+  if (!secs) return null;
+  return secsTopace(Math.round(secs/dist));
+}
 function getWeekStart(date) {
   const d = new Date(date);
   const day = d.getDay();
@@ -1134,6 +1146,13 @@ function ProfileScreen({ store, persist, onSaved }) {
   const set = (k,v) => setDraft(prev=>({...prev,[k]:v}));
   const setSchedule = (day,val) => setDraft(prev=>({...prev,schedule:{...prev.schedule,[day]:val}}));
   const toggleInjury = (inj,checked) => setDraft(prev=>({...prev,injuries:checked?[...(prev.injuries||[]),inj]:(prev.injuries||[]).filter(i=>i!==inj)}));
+  // Race pace: auto or manual override
+  const autoRacePace = computeRacePace(draft.goal, draft.goalTime);
+  const [racePaceOverride, setRacePaceOverride] = useState(()=>{
+    // Start in override mode only if a manual value exists that differs from computed
+    const auto = computeRacePace(store.profile.goal, store.profile.goalTime);
+    return !!(store.profile.racePace && store.profile.racePace !== auto);
+  });
 
   return (
     <div style={{ padding:"0 16px 24px",overflowY:"auto",flex:1 }}>
@@ -1161,7 +1180,23 @@ function ProfileScreen({ store, persist, onSaved }) {
         </div>
         <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
           <Field label="Threshold pace" value={draft.thresholdPace} onChange={v=>set("thresholdPace",v)} placeholder="5:00"/>
-          <Field label="Race pace" value={draft.racePace} onChange={v=>set("racePace",v)} placeholder="5:15"/>
+          <div>
+            <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>Race pace</label>
+            {!racePaceOverride && autoRacePace ? (
+              <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#f8f8f6" }}>
+                <span style={{ fontSize:15,color:"#1a1a1a",fontWeight:600 }}>{autoRacePace}/km</span>
+                <button onClick={()=>{ set("racePace",autoRacePace); setRacePaceOverride(true); }}
+                  style={{ fontSize:11,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>Edit</button>
+              </div>
+            ) : (
+              <div>
+                <input value={draft.racePace} onChange={e=>set("racePace",e.target.value)} placeholder={autoRacePace||"5:15"} inputMode="text"
+                  style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #1B6FE855",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
+                {autoRacePace && <button onClick={()=>{ set("racePace",""); setRacePaceOverride(false); }}
+                  style={{ fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",marginTop:4,padding:0 }}>← Auto ({autoRacePace}/km)</button>}
+              </div>
+            )}
+          </div>
           <Field label="Long run pace" value={draft.longRunPace} onChange={v=>set("longRunPace",v)} placeholder="6:20"/>
           <Field label="Easy HR (bpm)" value={draft.easyHR} onChange={v=>set("easyHR",v)} placeholder="130-140"/>
         </div>
@@ -1199,7 +1234,11 @@ function ProfileScreen({ store, persist, onSaved }) {
             </div>
           ))}
         </div>
-        <button onClick={()=>{ persist({profile:draft}); onSaved(); }}
+        <button onClick={()=>{
+          const toSave = {...draft};
+          if (!racePaceOverride && autoRacePace) toSave.racePace = autoRacePace;
+          persist({profile:toSave}); onSaved();
+        }}
           style={{ padding:14,borderRadius:10,background:"#1B6FE8",color:"white",border:"none",fontSize:15,fontWeight:700,cursor:"pointer" }}>
           Save Profile
         </button>
