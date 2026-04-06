@@ -39,6 +39,14 @@ function computeRacePace(goal, goalTime) {
   if (!secs) return null;
   return secsTopace(Math.round(secs/dist));
 }
+function computeGoalTime(goal, racePace) {
+  const dist = RACE_DISTANCES[goal];
+  const paceSecs = parsePace(racePace);
+  if (!dist || !paceSecs) return null;
+  const t = Math.round(paceSecs * dist);
+  const h = Math.floor(t/3600), m = Math.floor((t%3600)/60), s = t%60;
+  return `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+}
 function getWeekStart(date) {
   const d = new Date(date);
   const day = d.getDay();
@@ -1175,7 +1183,20 @@ function ProfileScreen({ store, persist, onSaved }) {
           {draft.goal==="Custom..."&&<Field label="Custom goal" value={draft.goalCustom} onChange={v=>set("goalCustom",v)} placeholder="e.g. 30km trail race"/>}
         </div>
         <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
-          <Field label="Goal time" value={draft.goalTime} onChange={v=>set("goalTime",v)} placeholder="e.g. 1:45:00"/>
+          {/* Goal time — editable when time is source; read-only (derived from pace) when pace is source */}
+          <div>
+            <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>Goal time</label>
+            {racePaceOverride && computeGoalTime(draft.goal, draft.racePace) ? (
+              <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#f8f8f6" }}>
+                <span style={{ fontSize:15,color:"#1a1a1a",fontWeight:600 }}>{computeGoalTime(draft.goal, draft.racePace)}</span>
+                <button onClick={()=>{ set("racePace",""); setRacePaceOverride(false); }}
+                  style={{ fontSize:11,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>Edit</button>
+              </div>
+            ) : (
+              <input value={draft.goalTime} onChange={e=>set("goalTime",e.target.value)} placeholder="e.g. 1:45:00" inputMode="text"
+                style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
+            )}
+          </div>
           <Field label="Race date" value={draft.goalDate} onChange={v=>set("goalDate",v)} type="date"/>
         </div>
         <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
@@ -1190,7 +1211,9 @@ function ProfileScreen({ store, persist, onSaved }) {
               </div>
             ) : (
               <div>
-                <input value={draft.racePace} onChange={e=>set("racePace",e.target.value)} placeholder={autoRacePace||"5:15"} inputMode="text"
+                <input value={draft.racePace}
+                  onChange={e=>{ set("racePace",e.target.value); const gt=computeGoalTime(draft.goal,e.target.value); if(gt) set("goalTime",gt); }}
+                  placeholder={autoRacePace||"5:15"} inputMode="text"
                   style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #1B6FE855",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
                 {autoRacePace && <button onClick={()=>{ set("racePace",""); setRacePaceOverride(false); }}
                   style={{ fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",marginTop:4,padding:0 }}>← Auto ({autoRacePace}/km)</button>}
@@ -1237,6 +1260,7 @@ function ProfileScreen({ store, persist, onSaved }) {
         <button onClick={()=>{
           const toSave = {...draft};
           if (!racePaceOverride && autoRacePace) toSave.racePace = autoRacePace;
+          if (racePaceOverride) { const gt=computeGoalTime(draft.goal,draft.racePace); if(gt) toSave.goalTime=gt; }
           persist({profile:toSave}); onSaved();
         }}
           style={{ padding:14,borderRadius:10,background:"#1B6FE8",color:"white",border:"none",fontSize:15,fontWeight:700,cursor:"pointer" }}>
