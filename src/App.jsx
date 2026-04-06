@@ -755,7 +755,11 @@ function ProgressScreen({ store }) {
   const weekGoals = weekPlan?.weekGoals;
   const isCurrentWeekPlan = !!weekPlan;
 
-  const thisWeekRuns = runSessions.filter(s=>getWeekStart(s.date)===weekStart);
+  // Include runs linked to this week's plan OR runs whose date falls in this calendar week (unlinked)
+  const thisWeekRuns = runSessions.filter(s=>
+    s.plannedWeekStart===weekStart ||
+    (!s.plannedWeekStart && getWeekStart(s.date)===weekStart)
+  );
   const recentRuns = runSessions.slice(-10);
 
   // Actuals this week
@@ -867,6 +871,64 @@ function ProgressScreen({ store }) {
           if (thisWeekRuns.length>0) return <div style={{ fontSize:12,color:"#aaa",marginTop:4 }}>Analyse sessions to see week score</div>;
           return null;
         })()}
+      </div>
+    );
+  }
+
+  // ── Total Training Block ──
+  function BlockComparison() {
+    const plans = store.weekPlans||[];
+    if (!plans.length) return null;
+    // Planned totals across all stored weeks
+    const plannedKm = plans.reduce((a,p)=>a+(parseFloat(p.weekGoals?.totalDistance)||0),0);
+    const plannedRuns = plans.reduce((a,p)=>{
+      const ds = p.weekGoals?.daySessions||{};
+      return a+Object.values(ds).filter(d=>d?.type?.startsWith("run")).length;
+    },0);
+    // Actual totals — all linked run sessions (any week)
+    const linkedRuns = runSessions.filter(s=>s.plannedWeekStart);
+    const actualKm = linkedRuns.reduce((a,s)=>a+(parseFloat(s.distance)||0),0);
+    const actualRuns = linkedRuns.length;
+    // Weeks coverage
+    const weeksWithPlan = plans.length;
+    const weeksWithRun = new Set(linkedRuns.map(s=>s.plannedWeekStart)).size;
+    const pct = plannedKm>0 ? Math.min(100,Math.round((actualKm/plannedKm)*100)) : 0;
+    return (
+      <div style={{ padding:14,borderRadius:10,border:"1px solid #eee",background:"#fff",marginBottom:12 }}>
+        <div style={{ fontSize:14,fontWeight:700,color:"#1a1a1a",marginBottom:12 }}>Training block — total progress</div>
+        {/* Progress bar */}
+        <div style={{ marginBottom:14 }}>
+          <div style={{ display:"flex",justifyContent:"space-between",fontSize:13,marginBottom:5 }}>
+            <span style={{ fontWeight:600,color:"#1a1a1a" }}>Distance logged</span>
+            <span style={{ fontWeight:700 }}><span style={{ color:"#1B6FE8" }}>{actualKm.toFixed(0)}km</span><span style={{ color:"#aaa",fontWeight:400 }}> / {plannedKm.toFixed(0)}km</span></span>
+          </div>
+          <div style={{ height:8,borderRadius:4,background:"#f0f0ec",overflow:"hidden" }}>
+            <div style={{ height:"100%",width:`${pct}%`,borderRadius:4,background:pct>=80?"#0F6E56":pct>=50?"#1B6FE8":"#b07000",transition:"width 0.4s" }}/>
+          </div>
+          <div style={{ fontSize:11,color:"#aaa",marginTop:3 }}>{pct}% of planned volume completed</div>
+        </div>
+        {/* Stats row */}
+        <div style={{ display:"flex",gap:8 }}>
+          <div style={{ flex:1,padding:"10px 10px",borderRadius:8,background:"#f8f8f6",textAlign:"center" }}>
+            <div style={{ fontSize:18,fontWeight:800,color:"#1B6FE8" }}>{actualRuns}<span style={{ fontSize:12,color:"#aaa",fontWeight:400 }}>/{plannedRuns}</span></div>
+            <div style={{ fontSize:11,color:"#888" }}>Runs logged</div>
+          </div>
+          <div style={{ flex:1,padding:"10px 10px",borderRadius:8,background:"#f8f8f6",textAlign:"center" }}>
+            <div style={{ fontSize:18,fontWeight:800,color:"#1B6FE8" }}>{weeksWithRun}<span style={{ fontSize:12,color:"#aaa",fontWeight:400 }}>/{weeksWithPlan}</span></div>
+            <div style={{ fontSize:11,color:"#888" }}>Weeks active</div>
+          </div>
+          {(()=>{
+            const scored = linkedRuns.filter(s=>s.score?.value!=null);
+            if (!scored.length) return null;
+            const avg = scored.reduce((a,s)=>a+s.score.value,0)/scored.length;
+            return (
+              <div style={{ flex:1,padding:"10px 10px",borderRadius:8,background:"#f8f8f6",textAlign:"center" }}>
+                <div style={{ fontSize:18,fontWeight:800,color:avg>=8?"#0F6E56":avg>=6?"#b07000":"#c00" }}>{avg.toFixed(1)}<span style={{ fontSize:12,color:"#aaa",fontWeight:400 }}>/10</span></div>
+                <div style={{ fontSize:11,color:"#888" }}>Avg score</div>
+              </div>
+            );
+          })()}
+        </div>
       </div>
     );
   }
@@ -1045,6 +1107,8 @@ function ProgressScreen({ store }) {
       )}
 
       <WeekComparison/>
+
+      <BlockComparison/>
 
       <div style={{ marginBottom:16 }}>
         <div style={{ fontSize:11,color:"#888",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:8 }}>Metrics</div>
