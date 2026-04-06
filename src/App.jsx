@@ -322,7 +322,7 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
         const label = new Date(ws+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"});
         // One dot per planned non-rest day; filled = linked session exists for that exact slot
         const plannedDays = plan
-          ? DAY_LABELS.filter(d=>{ const t=plan.weekGoals?.daySessions?.[d]?.type; return t&&t!=="rest"; })
+          ? DAY_LABELS.filter(d=>{ const t=plan.weekGoals?.daySessions?.[d]?.type; return t&&t.startsWith("run"); })
               .map(d=>({ day:d, type:plan.weekGoals.daySessions[d].type,
                 linked:(sessions||[]).some(s=>s.plannedDay===d&&s.plannedWeekStart===ws) }))
           : [];
