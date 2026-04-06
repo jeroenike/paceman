@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 
 const STORAGE_KEY = "paceman_v4";
 const RACE_GOALS = ["5km","10km","15km","Half Marathon","Marathon","Trail Run","Custom..."];
@@ -299,8 +299,8 @@ function LogForm({ initial, onSave, onCancel, stravaActivities, onImportStrava, 
 // ── Week Strip ──
 
 function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate }) {
-  const stripRef = React.useRef(null);
-  const activeRef = React.useRef(null);
+  const stripRef = useRef(null);
+  const activeRef = useRef(null);
   const weeks = [];
   const cur = new Date(getCurrentWeekStart() + "T00:00:00");
   const from = new Date(cur); from.setDate(from.getDate() - 42);
@@ -308,7 +308,7 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
   if (raceDate) { const rd = new Date(raceDate + "T00:00:00"); if (rd < to) { to.setTime(rd.getTime()); } }
   for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 7)) weeks.push(getWeekStart(d));
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (activeRef.current && stripRef.current) {
       activeRef.current.scrollIntoView({ inline:"center", block:"nearest", behavior:"smooth" });
     }
