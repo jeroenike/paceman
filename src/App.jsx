@@ -317,17 +317,27 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
   return (
     <div ref={stripRef} style={{ display:"flex",gap:6,overflowX:"auto",padding:"4px 0 10px",scrollbarWidth:"none",WebkitOverflowScrolling:"touch" }}>
       {weeks.map(ws=>{
-        const hasPlan = (weekPlans||[]).some(p=>p.weekStart===ws);
-        const hasSessions = (sessions||[]).some(s=>s.plannedWeekStart===ws||getWeekStart(s.date)===ws);
+        const plan = (weekPlans||[]).find(p=>p.weekStart===ws);
         const isActive = ws===activeWeekStart;
         const label = new Date(ws+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"});
+        // One dot per planned non-rest day; filled = linked session exists for that exact slot
+        const plannedDays = plan
+          ? DAY_LABELS.filter(d=>{ const t=plan.weekGoals?.daySessions?.[d]?.type; return t&&t!=="rest"; })
+              .map(d=>({ day:d, type:plan.weekGoals.daySessions[d].type,
+                linked:(sessions||[]).some(s=>s.plannedDay===d&&s.plannedWeekStart===ws) }))
+          : [];
         return (
           <button key={ws} ref={isActive?activeRef:null} onClick={()=>onSelect(ws)}
             style={{ flexShrink:0,padding:"5px 9px",borderRadius:8,border:`1.5px solid ${isActive?"#1B6FE8":"#eee"}`,background:isActive?"#f0f6ff":"#fff",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3 }}>
             <span style={{ fontSize:11,fontWeight:isActive?700:400,color:isActive?"#1B6FE8":"#888",whiteSpace:"nowrap" }}>{label}</span>
             <div style={{ display:"flex",gap:2,alignItems:"center" }}>
-              <div style={{ width:6,height:6,borderRadius:"50%",background:hasPlan?"#1B6FE8":"transparent",border:hasPlan?"none":"1.5px solid #ddd" }}/>
-              {hasSessions&&<div style={{ width:6,height:6,borderRadius:"50%",background:"#0F6E56" }}/>}
+              {plannedDays.length>0
+                ? plannedDays.map(({day,type,linked})=>{
+                    const c=SESSION_COLORS[type]||"#888780";
+                    return <div key={day} style={{ width:6,height:6,borderRadius:"50%",background:linked?c:"transparent",border:`1.5px solid ${c}` }}/>;
+                  })
+                : <div style={{ width:6,height:6,borderRadius:"50%",background:"transparent",border:"1.5px solid #ddd" }}/>
+              }
             </div>
           </button>
         );
