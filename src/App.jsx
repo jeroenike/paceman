@@ -32,7 +32,8 @@ function getWeekStart(date) {
   const day = d.getDay();
   const diff = d.getDate() - day + (day===0?-6:1);
   d.setDate(diff);
-  return d.toISOString().split("T")[0];
+  // Use local date parts to avoid UTC offset shifting the date
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
 function getCurrentWeekStart() { return getWeekStart(new Date()); }
 function getPlannedDay(sessionDate, weekPlan) {
@@ -298,21 +299,30 @@ function LogForm({ initial, onSave, onCancel, stravaActivities, onImportStrava, 
 // ── Week Strip ──
 
 function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate }) {
+  const stripRef = React.useRef(null);
+  const activeRef = React.useRef(null);
   const weeks = [];
   const cur = new Date(getCurrentWeekStart() + "T00:00:00");
   const from = new Date(cur); from.setDate(from.getDate() - 42);
   const to = new Date(cur); to.setDate(to.getDate() + 56);
   if (raceDate) { const rd = new Date(raceDate + "T00:00:00"); if (rd < to) { to.setTime(rd.getTime()); } }
   for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 7)) weeks.push(getWeekStart(d));
+
+  React.useEffect(() => {
+    if (activeRef.current && stripRef.current) {
+      activeRef.current.scrollIntoView({ inline:"center", block:"nearest", behavior:"smooth" });
+    }
+  }, [activeWeekStart]);
+
   return (
-    <div style={{ display:"flex",gap:6,overflowX:"auto",padding:"4px 0 10px",scrollbarWidth:"none",WebkitOverflowScrolling:"touch" }}>
+    <div ref={stripRef} style={{ display:"flex",gap:6,overflowX:"auto",padding:"4px 0 10px",scrollbarWidth:"none",WebkitOverflowScrolling:"touch" }}>
       {weeks.map(ws=>{
         const hasPlan = (weekPlans||[]).some(p=>p.weekStart===ws);
         const hasSessions = (sessions||[]).some(s=>s.plannedWeekStart===ws||getWeekStart(s.date)===ws);
         const isActive = ws===activeWeekStart;
         const label = new Date(ws+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"});
         return (
-          <button key={ws} onClick={()=>onSelect(ws)}
+          <button key={ws} ref={isActive?activeRef:null} onClick={()=>onSelect(ws)}
             style={{ flexShrink:0,padding:"5px 9px",borderRadius:8,border:`1.5px solid ${isActive?"#1B6FE8":"#eee"}`,background:isActive?"#f0f6ff":"#fff",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3 }}>
             <span style={{ fontSize:11,fontWeight:isActive?700:400,color:isActive?"#1B6FE8":"#888",whiteSpace:"nowrap" }}>{label}</span>
             <div style={{ display:"flex",gap:2,alignItems:"center" }}>
@@ -345,7 +355,8 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
   function shiftWeek(dir) {
     const d = new Date(activeWeekStart+"T00:00:00");
     d.setDate(d.getDate()+dir*7);
-    setActiveWeekStart(getWeekStart(d));
+    // activeWeekStart is always a Monday; just add/subtract 7 days, no re-normalization needed
+    setActiveWeekStart(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`);
   }
 
   return (
@@ -425,12 +436,14 @@ function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, se
         const mainSet = session?.mainSet || null;
         const color = SESSION_COLORS[type] || "#888780";
         const label = SESSION_LABELS[type] || type;
-        const isToday = day === today;
         const isExpanded = expandedDay === day;
         const isRun = type.startsWith("run");
         const dayDate = new Date(weekStartDate);
         dayDate.setDate(weekStartDate.getDate() + i);
         const dateStr = dayDate.toLocaleDateString("en-GB", { day:"numeric", month:"short" });
+        const dayDateStr = `${dayDate.getFullYear()}-${String(dayDate.getMonth()+1).padStart(2,"0")}-${String(dayDate.getDate()).padStart(2,"0")}`;
+        const n = new Date(); const todayStr = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-${String(n.getDate()).padStart(2,"0")}`;
+        const isToday = dayDateStr === todayStr;
         // Find session linked to this planned day
         const linked = sessions?.find(s => s.plannedDay === day && s.plannedWeekStart === weekPlan?.weekStart);
         return (
