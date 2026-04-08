@@ -431,6 +431,7 @@ function WeekScheduleEditor({ weekStart, profile, weekScheduleOverrides, onSave 
 
 function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, onSessionTap, onGoProfile, onSaveScheduleOverride }) {
   const [activeWeekStart, setActiveWeekStart] = useState(getCurrentWeekStart);
+  const [scheduleEdit, setScheduleEdit] = useState(false);
   const goalLabel = store.profile.goal==="Custom..."?store.profile.goalCustom:store.profile.goal;
   const daysToRace = store.profile.goalDate ? Math.ceil((new Date(store.profile.goalDate)-new Date())/(1000*60*60*24)) : null;
 
@@ -469,20 +470,20 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
       <WeekStrip weekPlans={store.weekPlans} sessions={store.sessions} activeWeekStart={activeWeekStart} onSelect={setActiveWeekStart} raceDate={store.profile.goalDate}/>
 
       {/* Arrow nav + week label */}
-      <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12 }}>
+      <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4 }}>
         <button onClick={()=>shiftWeek(-1)} style={{ padding:"6px 12px",borderRadius:8,background:"none",border:"1px solid #eee",color:"#888",fontSize:14,cursor:"pointer" }}>‹</button>
         <span style={{ fontSize:13,fontWeight:600,color:"#1a1a1a" }}>{weekRange}</span>
         <button onClick={()=>shiftWeek(1)} style={{ padding:"6px 12px",borderRadius:8,background:"none",border:"1px solid #eee",color:"#888",fontSize:14,cursor:"pointer" }}>›</button>
       </div>
 
-      {/* Week schedule customizer */}
+      {/* Edit schedule toggle */}
       {hasProfile&&(
-        <WeekScheduleEditor
-          weekStart={activeWeekStart}
-          profile={store.profile}
-          weekScheduleOverrides={store.weekScheduleOverrides||{}}
-          onSave={onSaveScheduleOverride}
-        />
+        <div style={{ display:"flex",justifyContent:"flex-end",marginBottom:10 }}>
+          {scheduleEdit
+            ? <button onClick={()=>setScheduleEdit(false)} style={{ fontSize:12,fontWeight:700,color:"#1B6FE8",background:"#f0f6ff",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer" }}>Done</button>
+            : <button onClick={()=>setScheduleEdit(true)} style={{ fontSize:12,color:"#aaa",background:"none",border:"none",padding:"4px 0",cursor:"pointer" }}>Edit schedule</button>
+          }
+        </div>
       )}
 
       {/* Generate button */}
@@ -519,6 +520,9 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
         onSessionTap={onSessionTap}
         sessions={store.sessions}
         weekPlan={activePlan}
+        scheduleEdit={scheduleEdit}
+        weekScheduleOverrides={store.weekScheduleOverrides||{}}
+        onSaveScheduleOverride={onSaveScheduleOverride}
       />
     </div>
   );
@@ -526,14 +530,33 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
 
 // ── Week Day List ──
 
-function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, sessions, weekPlan }) {
+function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride }) {
   const [expandedDay, setExpandedDay] = useState(null);
+  const [pickerDay, setPickerDay] = useState(null);
   const weekStartDate = new Date(weekStart + "T00:00:00");
+
+  function handleRowClick(day, isExpanded) {
+    if (scheduleEdit) {
+      setPickerDay(pickerDay === day ? null : day);
+    } else {
+      setExpandedDay(isExpanded ? null : day);
+    }
+  }
+
+  function setDayTypeOverride(day, type) {
+    const baseSchedule = { ...defaultProfile.schedule, ...(schedule||{}) };
+    const current = weekScheduleOverrides?.[weekStart] || baseSchedule;
+    const updated = { ...current, [day]: type };
+    onSaveScheduleOverride(weekStart, updated);
+    setPickerDay(null);
+  }
+
   return (
     <div style={{ display:"flex",flexDirection:"column",gap:6 }}>
       {DAY_LABELS.map((day, i) => {
         const session = daySessions?.[day];
-        const type = session?.type || schedule?.[day] || "rest";
+        const overrideType = weekScheduleOverrides?.[weekStart]?.[day];
+        const type = session?.type || overrideType || schedule?.[day] || "rest";
         const mainSet = session?.mainSet || null;
         const color = SESSION_COLORS[type] || "#888780";
         const label = SESSION_LABELS[type] || type;
@@ -547,84 +570,102 @@ function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, se
         const isToday = dayDateStr === todayStr;
         // Find session linked to this planned day
         const linked = sessions?.find(s => s.plannedDay === day && s.plannedWeekStart === weekPlan?.weekStart);
+        const isPickerOpen = scheduleEdit && pickerDay === day;
         return (
           <div key={day}
-            onClick={() => setExpandedDay(isExpanded ? null : day)}
-            style={{ borderRadius:10, overflow:"hidden", display:"flex", background:isToday?"#f0f6ff":"#fff", border:isToday?`1px solid ${color}`:"1px solid #eee", cursor:"pointer" }}>
-            <div style={{ width:4, background:color, flexShrink:0 }}/>
-            <div style={{ flex:1, padding:"11px 14px" }}>
-              <div style={{ display:"flex",alignItems:"center",gap:6 }}>
-                <span style={{ fontSize:12,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.05em",width:28 }}>{day}</span>
-                <span style={{ fontSize:11,color:"#bbb" }}>{dateStr}</span>
-                <span style={{ marginLeft:"auto",fontSize:11,fontWeight:700,color,background:`${color}18`,padding:"2px 8px",borderRadius:20 }}>{label}</span>
-                {isToday&&<span style={{ fontSize:10,color,fontWeight:800,letterSpacing:"0.06em" }}>TODAY</span>}
-                {linked?.score&&<span style={{ fontSize:12,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>}
-                <span style={{ fontSize:13,color:"#ccc",marginLeft:2,display:"inline-block",transform:isExpanded?"rotate(90deg)":"none",transition:"transform 0.15s" }}>›</span>
-              </div>
-              {/* Collapsed preview */}
-              {!isExpanded&&mainSet&&(
-                <div style={{ fontSize:12,color:"#aaa",marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{mainSet}</div>
-              )}
-              {/* Expanded detail */}
-              {isExpanded&&(
-                <div style={{ marginTop:10 }}>
-                  {mainSet
-                    ? <div style={{ fontSize:13,color:"#333",lineHeight:1.65,marginBottom:linked?10:0 }}>{mainSet}</div>
-                    : <div style={{ fontSize:12,color:"#bbb",fontStyle:"italic",marginBottom:linked?10:0 }}>No training details for this day.</div>
-                  }
-                  {/* Actual session panel */}
-                  {linked&&(
-                    <div style={{ padding:"10px 12px",borderRadius:8,background:"#f9f9f7",border:"1px solid #eee" }}>
-                      <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6 }}>
-                        <span style={{ fontSize:11,color:"#aaa",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em" }}>Actual</span>
-                        {linked.score&&(
-                          <div style={{ textAlign:"right" }}>
-                            <span style={{ fontSize:16,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>
-                          </div>
-                        )}
-                      </div>
-                      <div style={{ display:"flex",gap:10,flexWrap:"wrap",fontSize:12,color:"#555",marginBottom:6 }}>
-                        {linked.distance&&<span>{linked.distance} km</span>}
-                        {linked.avgPace&&<span>{linked.avgPace}/km</span>}
-                        {linked.avgHR&&<span>HR {linked.avgHR}</span>}
-                        {linked.rpe&&<span>RPE {linked.rpe}/10</span>}
-                      </div>
-                      {(()=>{
-                        const indicators = [];
-                        const tSecs = parsePace(weekPlan?.weekGoals?.targetPace);
-                        const aSecs = parsePace(linked.avgPace);
-                        if (tSecs&&aSecs) {
-                          const diff = aSecs - tSecs;
-                          indicators.push(diff<=0
-                            ? { label:`Pace on target (${secsTopace(Math.abs(diff))} ahead)`, color:"#0F6E56" }
-                            : { label:`Pace ${secsTopace(diff)} behind plan`, color:"#c00" });
-                        }
-                        const rpe = Number(linked.rpe);
-                        if (rpe) indicators.push(
-                          rpe<=5 ? { label:"RPE low — under-effort", color:"#b07000" }
-                          : rpe<=7 ? { label:"RPE controlled", color:"#0F6E56" }
-                          : rpe<=8 ? { label:"RPE high — check load", color:"#b07000" }
-                          : { label:"RPE very high — recovery needed", color:"#c00" }
-                        );
-                        return indicators.length ? (
-                          <div style={{ display:"flex",flexDirection:"column",gap:2,marginBottom:6 }}>
-                            {indicators.map((ind,j)=><span key={j} style={{ fontSize:11,fontWeight:600,color:ind.color }}>{ind.label}</span>)}
-                          </div>
-                        ) : null;
-                      })()}
-                      {linked.score?.verdict&&<div style={{ fontSize:12,color:"#666",fontStyle:"italic" }}>"{linked.score.verdict}"</div>}
-                    </div>
-                  )}
-                  {isRun&&(
-                    <button
-                      onClick={e=>{ e.stopPropagation(); onSessionTap(day); }}
-                      style={{ marginTop:10,padding:"7px 14px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE833",fontSize:13,fontWeight:600,cursor:"pointer" }}>
-                      Session detail →
-                    </button>
-                  )}
+            onClick={() => handleRowClick(day, isExpanded)}
+            style={{ borderRadius:10, overflow:"hidden", display:"flex", flexDirection:"column", background:isToday?"#f0f6ff":"#fff", border:isPickerOpen?`1.5px solid ${color}`:isToday?`1px solid ${color}`:"1px solid #eee", cursor:"pointer" }}>
+            <div style={{ display:"flex" }}>
+              <div style={{ width:4, background:color, flexShrink:0, borderRadius:"10px 0 0 10px" }}/>
+              <div style={{ flex:1, padding:"11px 14px" }}>
+                <div style={{ display:"flex",alignItems:"center",gap:6 }}>
+                  <span style={{ fontSize:12,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.05em",width:28 }}>{day}</span>
+                  <span style={{ fontSize:11,color:"#bbb" }}>{dateStr}</span>
+                  <span style={{ marginLeft:"auto",fontSize:11,fontWeight:700,color,background:`${color}18`,padding:"2px 8px",borderRadius:20 }}>{label}</span>
+                  {isToday&&<span style={{ fontSize:10,color,fontWeight:800,letterSpacing:"0.06em" }}>TODAY</span>}
+                  {linked?.score&&<span style={{ fontSize:12,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>}
+                  {!scheduleEdit&&<span style={{ fontSize:13,color:"#ccc",marginLeft:2,display:"inline-block",transform:isExpanded?"rotate(90deg)":"none",transition:"transform 0.15s" }}>›</span>}
+                  {scheduleEdit&&<span style={{ fontSize:11,color:isPickerOpen?color:"#ccc",marginLeft:2 }}>{isPickerOpen?"▾":"✎"}</span>}
                 </div>
-              )}
+                {/* Collapsed preview */}
+                {!isExpanded&&!scheduleEdit&&mainSet&&(
+                  <div style={{ fontSize:12,color:"#aaa",marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{mainSet}</div>
+                )}
+              </div>
             </div>
+            {/* Schedule edit pill picker */}
+            {isPickerOpen&&(
+              <div style={{ padding:"8px 14px 12px",borderTop:`1px solid ${color}22`,display:"flex",flexWrap:"wrap",gap:6 }} onClick={e=>e.stopPropagation()}>
+                {SESSION_TYPES.map(t=>(
+                  <button key={t} onClick={()=>setDayTypeOverride(day,t)}
+                    style={{ padding:"5px 12px",borderRadius:16,border:"none",
+                      background:type===t?SESSION_COLORS[t]:"#ebebeb",
+                      color:type===t?"#fff":"#333",
+                      fontSize:12,fontWeight:600,cursor:"pointer" }}>
+                    {SESSION_LABELS[t]}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* Expanded detail (only when not in schedule edit mode) */}
+            {isExpanded&&!scheduleEdit&&(
+              <div style={{ padding:"0 14px 14px" }}>
+                {mainSet
+                  ? <div style={{ fontSize:13,color:"#333",lineHeight:1.65,marginBottom:linked?10:0 }}>{mainSet}</div>
+                  : <div style={{ fontSize:12,color:"#bbb",fontStyle:"italic",marginBottom:linked?10:0 }}>No training details for this day.</div>
+                }
+                {/* Actual session panel */}
+                {linked&&(
+                  <div style={{ padding:"10px 12px",borderRadius:8,background:"#f9f9f7",border:"1px solid #eee" }}>
+                    <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6 }}>
+                      <span style={{ fontSize:11,color:"#aaa",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em" }}>Actual</span>
+                      {linked.score&&(
+                        <div style={{ textAlign:"right" }}>
+                          <span style={{ fontSize:16,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display:"flex",gap:10,flexWrap:"wrap",fontSize:12,color:"#555",marginBottom:6 }}>
+                      {linked.distance&&<span>{linked.distance} km</span>}
+                      {linked.avgPace&&<span>{linked.avgPace}/km</span>}
+                      {linked.avgHR&&<span>HR {linked.avgHR}</span>}
+                      {linked.rpe&&<span>RPE {linked.rpe}/10</span>}
+                    </div>
+                    {(()=>{
+                      const indicators = [];
+                      const tSecs = parsePace(weekPlan?.weekGoals?.targetPace);
+                      const aSecs = parsePace(linked.avgPace);
+                      if (tSecs&&aSecs) {
+                        const diff = aSecs - tSecs;
+                        indicators.push(diff<=0
+                          ? { label:`Pace on target (${secsTopace(Math.abs(diff))} ahead)`, color:"#0F6E56" }
+                          : { label:`Pace ${secsTopace(diff)} behind plan`, color:"#c00" });
+                      }
+                      const rpe = Number(linked.rpe);
+                      if (rpe) indicators.push(
+                        rpe<=5 ? { label:"RPE low — under-effort", color:"#b07000" }
+                        : rpe<=7 ? { label:"RPE controlled", color:"#0F6E56" }
+                        : rpe<=8 ? { label:"RPE high — check load", color:"#b07000" }
+                        : { label:"RPE very high — recovery needed", color:"#c00" }
+                      );
+                      return indicators.length ? (
+                        <div style={{ display:"flex",flexDirection:"column",gap:2,marginBottom:6 }}>
+                          {indicators.map((ind,j)=><span key={j} style={{ fontSize:11,fontWeight:600,color:ind.color }}>{ind.label}</span>)}
+                        </div>
+                      ) : null;
+                    })()}
+                    {linked.score?.verdict&&<div style={{ fontSize:12,color:"#666",fontStyle:"italic" }}>"{linked.score.verdict}"</div>}
+                  </div>
+                )}
+                {isRun&&(
+                  <button
+                    onClick={e=>{ e.stopPropagation(); onSessionTap(day); }}
+                    style={{ marginTop:10,padding:"7px 14px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE833",fontSize:13,fontWeight:600,cursor:"pointer" }}>
+                    Session detail →
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         );
       })}
@@ -1225,6 +1266,8 @@ function ProfileScreen({ store, persist, onSaved }) {
   const set = (k,v) => setDraft(prev=>({...prev,[k]:v}));
   const setSchedule = (day,val) => setDraft(prev=>({...prev,schedule:{...prev.schedule,[day]:val}}));
   const toggleInjury = (inj,checked) => setDraft(prev=>({...prev,injuries:checked?[...(prev.injuries||[]),inj]:(prev.injuries||[]).filter(i=>i!==inj)}));
+  const [scheduleEditMode, setScheduleEditMode] = useState(false);
+  const [schedulePickerDay, setSchedulePickerDay] = useState(null);
   // Race pace: auto or manual override
   const autoRacePace = computeRacePace(draft.goal, draft.goalTime);
   const [racePaceOverride, setRacePaceOverride] = useState(()=>{
@@ -1316,17 +1359,45 @@ function ProfileScreen({ store, persist, onSaved }) {
           </div>
         </div>
         <div>
-          <SectionLabel>Weekly Schedule</SectionLabel>
-          {DAY_LABELS.map(day=>(
-            <div key={day} style={{ display:"flex",alignItems:"center",gap:10,marginBottom:8 }}>
-              <div style={{ width:8,height:8,borderRadius:"50%",background:SESSION_COLORS[draft.schedule?.[day]||"rest"],flexShrink:0 }}/>
-              <span style={{ fontSize:12,fontWeight:700,width:34,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.05em" }}>{day}</span>
-              <select value={draft.schedule?.[day]||"rest"} onChange={e=>setSchedule(day,e.target.value)}
-                style={{ flex:1,padding:"8px 10px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:14,outline:"none" }}>
-                {SESSION_TYPES.map(t=><option key={t} value={t}>{SESSION_LABELS[t]}</option>)}
-              </select>
-            </div>
-          ))}
+          <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10 }}>
+            <span style={{ fontSize:11,color:"#888",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.07em" }}>Weekly Schedule</span>
+            {scheduleEditMode
+              ? <button onClick={()=>{ setScheduleEditMode(false); setSchedulePickerDay(null); }}
+                  style={{ fontSize:12,fontWeight:700,color:"#1B6FE8",background:"#f0f6ff",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer" }}>Done</button>
+              : <button onClick={()=>setScheduleEditMode(true)}
+                  style={{ fontSize:12,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>Edit</button>
+            }
+          </div>
+          {DAY_LABELS.map(day=>{
+            const type = draft.schedule?.[day]||"rest";
+            const color = SESSION_COLORS[type]||"#888780";
+            const label = SESSION_LABELS[type]||type;
+            const isOpen = scheduleEditMode && schedulePickerDay===day;
+            return (
+              <div key={day} style={{ marginBottom:6,borderRadius:8,border:isOpen?`1.5px solid ${color}`:"1px solid #eee",overflow:"hidden" }}>
+                <div onClick={()=>scheduleEditMode&&setSchedulePickerDay(isOpen?null:day)}
+                  style={{ display:"flex",alignItems:"center",gap:10,padding:"10px 12px",cursor:scheduleEditMode?"pointer":"default",background:isOpen?`${color}0d`:"#fff" }}>
+                  <div style={{ width:8,height:8,borderRadius:"50%",background:color,flexShrink:0 }}/>
+                  <span style={{ fontSize:12,fontWeight:700,width:34,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.05em" }}>{day}</span>
+                  <span style={{ fontSize:14,color:"#1a1a1a",flex:1 }}>{label}</span>
+                  {scheduleEditMode&&<span style={{ fontSize:11,color:isOpen?color:"#ccc" }}>{isOpen?"▾":"✎"}</span>}
+                </div>
+                {isOpen&&(
+                  <div style={{ padding:"8px 12px 12px",borderTop:`1px solid ${color}22`,display:"flex",flexWrap:"wrap",gap:6 }}>
+                    {SESSION_TYPES.map(t=>(
+                      <button key={t} onClick={()=>{ setSchedule(day,t); setSchedulePickerDay(null); }}
+                        style={{ padding:"5px 12px",borderRadius:16,border:"none",
+                          background:type===t?SESSION_COLORS[t]:"#ebebeb",
+                          color:type===t?"#fff":"#333",
+                          fontSize:12,fontWeight:600,cursor:"pointer" }}>
+                        {SESSION_LABELS[t]}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
         <button onClick={()=>{
           const toSave = {...draft};
