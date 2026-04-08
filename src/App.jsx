@@ -490,26 +490,22 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
         </button>
       )}
 
-      {/* Week summary strip */}
-      {weekGoals&&(
-        <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap" }}>
-          {weekGoals.totalDistance&&<Chip label={`${weekGoals.totalDistance} km`} color="#1B6FE8"/>}
-          {weekGoals.runsPlanned&&<Chip label={`${weekGoals.runsPlanned} runs`} color="#0F6E56"/>}
-        </div>
-      )}
+      {/* Week summary strip + edit schedule toggle on same row */}
+      <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap" }}>
+        {weekGoals?.totalDistance&&<Chip label={`${weekGoals.totalDistance} km`} color="#1B6FE8"/>}
+        {weekGoals?.runsPlanned&&<Chip label={`${weekGoals.runsPlanned} runs`} color="#0F6E56"/>}
+        {hasProfile&&(
+          <div style={{ marginLeft:"auto" }}>
+            {scheduleEdit
+              ? <button onClick={()=>setScheduleEdit(false)} style={{ fontSize:12,fontWeight:700,color:"#1B6FE8",background:"#f0f6ff",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer" }}>Done</button>
+              : <button onClick={()=>setScheduleEdit(true)} style={{ fontSize:12,color:"#aaa",background:"none",border:"none",padding:"4px 0",cursor:"pointer" }}>Edit schedule</button>
+            }
+          </div>
+        )}
+      </div>
 
       <ErrorBox message={error}/>
       {loading&&<Dots/>}
-
-      {/* Edit schedule toggle */}
-      {hasProfile&&(
-        <div style={{ display:"flex",justifyContent:"flex-end",marginBottom:6 }}>
-          {scheduleEdit
-            ? <button onClick={()=>setScheduleEdit(false)} style={{ fontSize:12,fontWeight:700,color:"#1B6FE8",background:"#f0f6ff",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer" }}>Done</button>
-            : <button onClick={()=>setScheduleEdit(true)} style={{ fontSize:12,color:"#aaa",background:"none",border:"none",padding:"4px 0",cursor:"pointer" }}>Edit schedule</button>
-          }
-        </div>
-      )}
 
       {/* Unified day list */}
       <WeekDayList
