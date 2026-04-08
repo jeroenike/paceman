@@ -470,21 +470,11 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
       <WeekStrip weekPlans={store.weekPlans} sessions={store.sessions} activeWeekStart={activeWeekStart} onSelect={setActiveWeekStart} raceDate={store.profile.goalDate}/>
 
       {/* Arrow nav + week label */}
-      <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4 }}>
+      <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12 }}>
         <button onClick={()=>shiftWeek(-1)} style={{ padding:"6px 12px",borderRadius:8,background:"none",border:"1px solid #eee",color:"#888",fontSize:14,cursor:"pointer" }}>‹</button>
         <span style={{ fontSize:13,fontWeight:600,color:"#1a1a1a" }}>{weekRange}</span>
         <button onClick={()=>shiftWeek(1)} style={{ padding:"6px 12px",borderRadius:8,background:"none",border:"1px solid #eee",color:"#888",fontSize:14,cursor:"pointer" }}>›</button>
       </div>
-
-      {/* Edit schedule toggle */}
-      {hasProfile&&(
-        <div style={{ display:"flex",justifyContent:"flex-end",marginBottom:10 }}>
-          {scheduleEdit
-            ? <button onClick={()=>setScheduleEdit(false)} style={{ fontSize:12,fontWeight:700,color:"#1B6FE8",background:"#f0f6ff",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer" }}>Done</button>
-            : <button onClick={()=>setScheduleEdit(true)} style={{ fontSize:12,color:"#aaa",background:"none",border:"none",padding:"4px 0",cursor:"pointer" }}>Edit schedule</button>
-          }
-        </div>
-      )}
 
       {/* Generate button */}
       {!hasProfile?(
@@ -510,6 +500,16 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
 
       <ErrorBox message={error}/>
       {loading&&<Dots/>}
+
+      {/* Edit schedule toggle */}
+      {hasProfile&&(
+        <div style={{ display:"flex",justifyContent:"flex-end",marginBottom:6 }}>
+          {scheduleEdit
+            ? <button onClick={()=>setScheduleEdit(false)} style={{ fontSize:12,fontWeight:700,color:"#1B6FE8",background:"#f0f6ff",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer" }}>Done</button>
+            : <button onClick={()=>setScheduleEdit(true)} style={{ fontSize:12,color:"#aaa",background:"none",border:"none",padding:"4px 0",cursor:"pointer" }}>Edit schedule</button>
+          }
+        </div>
+      )}
 
       {/* Unified day list */}
       <WeekDayList
