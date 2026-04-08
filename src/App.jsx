@@ -555,9 +555,8 @@ function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, se
         const baseScheduleType = { ...defaultProfile.schedule, ...(schedule||{}) }[day] || "rest";
         // In edit mode: show override (or profile default) so changes are immediately visible
         // In normal mode: show generated plan type first, then fall back to overrides/profile
-        const type = scheduleEdit
-          ? (overrideType || baseScheduleType)
-          : (session?.type || overrideType || baseScheduleType);
+        // Override always wins over generated plan — if user explicitly set a type, show it
+        const type = overrideType || session?.type || baseScheduleType;
         const mainSet = session?.mainSet || null;
         const color = SESSION_COLORS[type] || "#888780";
         const label = SESSION_LABELS[type] || type;
