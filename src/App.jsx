@@ -556,7 +556,12 @@ function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, se
       {DAY_LABELS.map((day, i) => {
         const session = daySessions?.[day];
         const overrideType = weekScheduleOverrides?.[weekStart]?.[day];
-        const type = session?.type || overrideType || schedule?.[day] || "rest";
+        const baseScheduleType = { ...defaultProfile.schedule, ...(schedule||{}) }[day] || "rest";
+        // In edit mode: show override (or profile default) so changes are immediately visible
+        // In normal mode: show generated plan type first, then fall back to overrides/profile
+        const type = scheduleEdit
+          ? (overrideType || baseScheduleType)
+          : (session?.type || overrideType || baseScheduleType);
         const mainSet = session?.mainSet || null;
         const color = SESSION_COLORS[type] || "#888780";
         const label = SESSION_LABELS[type] || type;
