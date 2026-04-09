@@ -758,7 +758,7 @@ function SessionScreen({ store, activeDay, loading, error, aiText, onBack }) {
 
 // ── Log Screen ──
 
-function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivities, onImportStrava, onSaveSession, onBulkSave, onAnalyze, editingSession, setEditingSession }) {
+function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivities, onImportStrava, onSaveSession, onBulkSave, onBulkDelete, onAnalyze, editingSession, setEditingSession }) {
   const [successMsg, setSuccessMsg] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [analysisSessionId, setAnalysisSessionId] = useState(null);
@@ -771,12 +771,12 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
   function exitSelectMode() { setSelectMode(false); setSelected(new Set()); }
   function deleteSelected() {
     if (!window.confirm(`Delete ${selected.size} session${selected.size>1?"s":""}?`)) return;
-    selected.forEach(id => onSaveSession(null, id));
+    onBulkDelete([...selected]);
     exitSelectMode();
   }
   function deleteAll() {
     if (!window.confirm(`Delete all ${sessions.length} sessions? This cannot be undone.`)) return;
-    sessions.forEach(s => onSaveSession(null, s.id));
+    onBulkDelete(sessions.map(s=>s.id));
     exitSelectMode();
   }
 
@@ -1639,6 +1639,11 @@ export default function App() {
     setEditingSession(null); setStravaActivities([]);
   }
 
+  function bulkDeleteSessions(ids) {
+    const idSet = new Set(ids);
+    persist({ sessions:(store.sessions||[]).filter(s=>!idSet.has(s.id)) });
+  }
+
   function bulkSaveSessions(newSessions) {
     const existing = store.sessions||[];
     const existingStravaIds = existing.filter(s=>s.stravaId).map(s=>s.stravaId);
@@ -1779,7 +1784,7 @@ Include: exact paces, HR zones (bpm), cadence targets, rep structure, rest.`);
       <div style={{ flex:1,overflowY:"auto",display:"flex",flexDirection:"column" }}>
         {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onSessionTap={getSessionDetail} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={(weekStart,scheduleOrNull)=>{ const u={...(store.weekScheduleOverrides||{})}; if(scheduleOrNull===null){delete u[weekStart];}else{u[weekStart]=scheduleOrNull;} persist({weekScheduleOverrides:u}); }}/>}
         {screen==="session"&&<SessionScreen store={store} activeDay={activeDay} loading={loading} error={error} aiText={aiText} onBack={()=>{ setScreen("home"); setAiText(""); setActiveDay(null); }}/>}
-        {screen==="log"&&<LogScreen store={store} loading={loading} error={error} aiText={aiText} stravaLoading={stravaLoading} stravaActivities={stravaActivities} onImportStrava={importFromStrava} onSaveSession={saveSession} onBulkSave={bulkSaveSessions} onAnalyze={analyzeSession} editingSession={editingSession} setEditingSession={setEditingSession}/>}
+        {screen==="log"&&<LogScreen store={store} loading={loading} error={error} aiText={aiText} stravaLoading={stravaLoading} stravaActivities={stravaActivities} onImportStrava={importFromStrava} onSaveSession={saveSession} onBulkSave={bulkSaveSessions} onBulkDelete={bulkDeleteSessions} onAnalyze={analyzeSession} editingSession={editingSession} setEditingSession={setEditingSession}/>}
         {screen==="progress"&&<ProgressScreen store={store}/>}
         {screen==="profile"&&<ProfileScreen store={store} persist={persist} onSaved={()=>setScreen("home")}/>}
       </div>
