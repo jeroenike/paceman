@@ -309,7 +309,7 @@ function LogForm({ initial, onSave, onCancel, stravaActivities, onImportStrava, 
         {onCancel&&<button onClick={onCancel} style={{ flex:1,padding:13,borderRadius:10,background:"none",color:"#888",border:"1px solid #e0e0dc",fontSize:15,fontWeight:600,cursor:"pointer" }}>Cancel</button>}
         <button onClick={handleSave}
           style={{ flex:2,padding:13,borderRadius:10,background:isValid?"#1B6FE8":"#e0e0dc",color:isValid?"white":"#aaa",border:"none",fontSize:15,fontWeight:700,cursor:"pointer" }}>
-          {initial?"Update Session":"Save Session"}
+          {initial?.id?"Update Session":"Save Session"}
         </button>
       </div>
     </div>
@@ -440,7 +440,7 @@ function WeekScheduleEditor({ weekStart, profile, weekScheduleOverrides, onSave 
 
 // ── Home Screen ──
 
-function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, onSessionTap, onGoProfile, onSaveScheduleOverride }) {
+function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, onGoProfile, onSaveScheduleOverride, onSaveSession }) {
   const [activeWeekStart, setActiveWeekStart] = useState(getCurrentWeekStart);
   const [scheduleEdit, setScheduleEdit] = useState(false);
   const goalLabel = store.profile.goal==="Custom..."?store.profile.goalCustom:store.profile.goal;
@@ -520,19 +520,41 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
         </button>
       ));})()}
 
-      {/* Week summary strip + edit schedule toggle on same row */}
-      <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap" }}>
-        {weekGoals?.totalDistance&&<Chip label={`${weekGoals.totalDistance} km`} color="#1B6FE8"/>}
-        {weekGoals?.runsPlanned&&<Chip label={`${weekGoals.runsPlanned} runs`} color="#0F6E56"/>}
-        {hasProfile&&(
-          <div style={{ marginLeft:"auto" }}>
-            {scheduleEdit
-              ? <button onClick={()=>setScheduleEdit(false)} style={{ fontSize:12,fontWeight:700,color:"#1B6FE8",background:"#f0f6ff",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer" }}>Done</button>
-              : <button onClick={()=>setScheduleEdit(true)} style={{ fontSize:12,color:"#aaa",background:"none",border:"none",padding:"4px 0",cursor:"pointer" }}>Edit schedule</button>
-            }
+      {/* Week summary bar + edit schedule toggle */}
+      {(()=>{
+        const weekSessions = (store.sessions||[]).filter(s => s.plannedWeekStart === activeWeekStart && parseFloat(s.distance||"") > 0);
+        const actualKm = weekSessions.reduce((sum,s) => sum + (parseFloat(s.distance)||0), 0);
+        const plannedKm = weekGoals?.totalDistance || 0;
+        const pct = plannedKm > 0 ? Math.min(100, Math.round((actualKm/plannedKm)*100)) : 0;
+        const runsDone = weekSessions.length;
+        const runsPlanned = weekGoals?.runsPlanned || 0;
+        return (
+          <div style={{ marginBottom:10 }}>
+            {weekGoals&&(
+              <div style={{ marginBottom:8 }}>
+                <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4 }}>
+                  <div style={{ fontSize:12,color:"#555" }}>
+                    <span style={{ fontWeight:700 }}>{actualKm.toFixed(1)} km</span>
+                    <span style={{ color:"#aaa" }}> / {plannedKm} km planned</span>
+                  </div>
+                  <div style={{ fontSize:12,color:"#aaa" }}>{runsDone} / {runsPlanned} runs</div>
+                </div>
+                <div style={{ height:6,borderRadius:4,background:"#f0f0ec",overflow:"hidden" }}>
+                  <div style={{ height:"100%",borderRadius:4,background:pct>=90?"#0F6E56":pct>=50?"#1B6FE8":"#aaa",width:`${pct}%`,transition:"width 0.3s" }}/>
+                </div>
+              </div>
+            )}
+            {hasProfile&&(
+              <div style={{ display:"flex",justifyContent:"flex-end" }}>
+                {scheduleEdit
+                  ? <button onClick={()=>setScheduleEdit(false)} style={{ fontSize:12,fontWeight:700,color:"#1B6FE8",background:"#f0f6ff",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer" }}>Done</button>
+                  : <button onClick={()=>setScheduleEdit(true)} style={{ fontSize:12,color:"#aaa",background:"none",border:"none",padding:"4px 0",cursor:"pointer" }}>Edit schedule</button>
+                }
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        );
+      })()}
 
       <ErrorBox message={error}/>
       {loading&&<Dots/>}
@@ -543,13 +565,13 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
         daySessions={weekGoals?.daySessions}
         today={today}
         weekStart={activeWeekStart}
-        onSessionTap={onSessionTap}
         sessions={store.sessions}
         weekPlan={activePlan}
         scheduleEdit={scheduleEdit}
         weekScheduleOverrides={store.weekScheduleOverrides||{}}
         onSaveScheduleOverride={onSaveScheduleOverride}
         raceDate={store.profile.goalDate}
+        onSaveSession={onSaveSession}
       />
     </div>
   );
@@ -557,18 +579,10 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
 
 // ── Week Day List ──
 
-function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride, raceDate }) {
-  const [expandedDay, setExpandedDay] = useState(null);
+function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride, raceDate, onSaveSession }) {
   const [pickerDay, setPickerDay] = useState(null);
+  const [inlineFormDay, setInlineFormDay] = useState(null); // {day, initial} or null
   const weekStartDate = new Date(weekStart + "T00:00:00");
-
-  function handleRowClick(day, isExpanded) {
-    if (scheduleEdit) {
-      setPickerDay(pickerDay === day ? null : day);
-    } else {
-      setExpandedDay(isExpanded ? null : day);
-    }
-  }
 
   function setDayTypeOverride(day, type) {
     const baseSchedule = { ...defaultProfile.schedule, ...(schedule||{}) };
@@ -578,20 +592,27 @@ function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, se
     setPickerDay(null);
   }
 
+  function parseMainSet(mainSet) {
+    if (!mainSet) return [];
+    const parts = mainSet.split(/,\s+/).map(s => s.trim()).filter(Boolean);
+    return parts.length > 1 ? parts : [mainSet];
+  }
+
+  const n = new Date();
+  const todayStr = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-${String(n.getDate()).padStart(2,"0")}`;
+
   return (
-    <div style={{ display:"flex",flexDirection:"column",gap:6 }}>
+    <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
       {DAY_LABELS.map((day, i) => {
         const dayDate = new Date(weekStartDate);
         dayDate.setDate(weekStartDate.getDate() + i);
         const dateStr = dayDate.toLocaleDateString("en-GB", { day:"numeric", month:"short" });
         const dayDateStr = `${dayDate.getFullYear()}-${String(dayDate.getMonth()+1).padStart(2,"0")}-${String(dayDate.getDate()).padStart(2,"0")}`;
 
-        // Don't show days after race date
         if (raceDate && dayDateStr > raceDate) return null;
 
         // Race day — special celebratory card
         if (raceDate && dayDateStr === raceDate) {
-          const n = new Date(); const todayStr = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-${String(n.getDate()).padStart(2,"0")}`;
           const isToday = dayDateStr === todayStr;
           return (
             <div key={day} style={{ borderRadius:10,overflow:"hidden",border:"2px solid #e8a020",background:"linear-gradient(135deg,#fff8ed 0%,#fff3d6 100%)" }}>
@@ -616,117 +637,144 @@ function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, se
         const session = daySessions?.[day];
         const overrideType = weekScheduleOverrides?.[weekStart]?.[day];
         const baseScheduleType = { ...defaultProfile.schedule, ...(schedule||{}) }[day] || "rest";
-        // In edit mode: show override (or profile default) so changes are immediately visible
-        // In normal mode: show generated plan type first, then fall back to overrides/profile
-        // Override always wins over generated plan — if user explicitly set a type, show it
         const type = overrideType || session?.type || baseScheduleType;
         const mainSet = session?.mainSet || null;
         const color = SESSION_COLORS[type] || "#888780";
         const label = SESSION_LABELS[type] || type;
-        const isExpanded = expandedDay === day;
         const isRun = type.startsWith("run");
-        const n = new Date(); const todayStr = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-${String(n.getDate()).padStart(2,"0")}`;
+        const isRest = type === "rest";
         const isToday = dayDateStr === todayStr;
-        // Find session linked to this planned day
+        const isPast = dayDateStr < todayStr;
         const linked = sessions?.find(s => s.plannedDay === day && s.plannedWeekStart === weekPlan?.weekStart);
+        const hasDone = !!linked && !!parseFloat(linked.distance||"");
+        const isMissed = isPast && !isRest && !hasDone;
         const isPickerOpen = scheduleEdit && pickerDay === day;
+        const isInlineForm = inlineFormDay?.day === day;
+
+        let cardBg, cardBorder;
+        if (isPickerOpen) { cardBg = "#fff"; cardBorder = `1.5px solid ${color}`; }
+        else if (isToday) { cardBg = "#f0f6ff"; cardBorder = `1px solid ${color}`; }
+        else if (hasDone) { cardBg = "#f4fbf7"; cardBorder = "1px solid #b8e8cd"; }
+        else if (isMissed) { cardBg = "#fff9f3"; cardBorder = "1px solid #f5d8b0"; }
+        else { cardBg = "#fff"; cardBorder = "1px solid #eee"; }
+
+        const bullets = parseMainSet(mainSet);
+        const dayGoal = weekPlan?.weekGoals?.dayGoals?.[day];
+
         return (
           <div key={day}
-            onClick={() => handleRowClick(day, isExpanded)}
-            style={{ borderRadius:10, overflow:"hidden", display:"flex", flexDirection:"column", background:isToday?"#f0f6ff":"#fff", border:isPickerOpen?`1.5px solid ${color}`:isToday?`1px solid ${color}`:"1px solid #eee", cursor:"pointer" }}>
+            onClick={scheduleEdit ? ()=>setPickerDay(pickerDay===day?null:day) : undefined}
+            style={{ borderRadius:10,overflow:"hidden",background:cardBg,border:cardBorder,cursor:scheduleEdit?"pointer":"default" }}>
             <div style={{ display:"flex" }}>
-              <div style={{ width:4, background:color, flexShrink:0, borderRadius:"10px 0 0 10px" }}/>
-              <div style={{ flex:1, padding:"11px 14px" }}>
-                <div style={{ display:"flex",alignItems:"center",gap:6,minWidth:0 }}>
+              <div style={{ width:4,background:color,flexShrink:0,borderRadius:"10px 0 0 10px",alignSelf:"stretch" }}/>
+              <div style={{ flex:1,minWidth:0 }}>
+
+                {/* Card header */}
+                <div style={{ padding:"11px 14px 10px",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap" }}>
                   <span style={{ fontSize:12,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.05em",width:28,flexShrink:0 }}>{day}</span>
-                  <span style={{ fontSize:11,color:"#bbb",flexShrink:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{dateStr}</span>
-                  <div style={{ display:"flex",alignItems:"center",gap:6,marginLeft:"auto",flexShrink:0 }}>
+                  <span style={{ fontSize:11,color:"#bbb",flexShrink:0 }}>{dateStr}</span>
+                  {isToday&&<span style={{ fontSize:10,color,fontWeight:800,letterSpacing:"0.06em" }}>TODAY</span>}
+                  <div style={{ marginLeft:"auto",display:"flex",alignItems:"center",gap:6 }}>
                     <span style={{ fontSize:11,fontWeight:700,color,background:`${color}18`,padding:"2px 8px",borderRadius:20,whiteSpace:"nowrap" }}>{label}</span>
-                    {isToday&&<span style={{ fontSize:10,color,fontWeight:800,letterSpacing:"0.06em" }}>TODAY</span>}
-                    {linked?.score&&<span style={{ fontSize:12,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>}
-                    {!scheduleEdit&&<span style={{ fontSize:13,color:"#ccc",display:"inline-block",transform:isExpanded?"rotate(90deg)":"none",transition:"transform 0.15s" }}>›</span>}
                     {scheduleEdit&&<span style={{ fontSize:11,color:isPickerOpen?color:"#ccc" }}>{isPickerOpen?"▾":"✎"}</span>}
                   </div>
                 </div>
-                {/* Collapsed preview */}
-                {!isExpanded&&!scheduleEdit&&mainSet&&(
-                  <div style={{ fontSize:12,color:"#aaa",marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{mainSet}</div>
-                )}
-              </div>
-            </div>
-            {/* Schedule edit pill picker */}
-            {isPickerOpen&&(
-              <div style={{ padding:"8px 14px 12px",borderTop:`1px solid ${color}22`,display:"flex",flexWrap:"wrap",gap:6 }} onClick={e=>e.stopPropagation()}>
-                {SESSION_TYPES.map(t=>(
-                  <button key={t} onClick={()=>setDayTypeOverride(day,t)}
-                    style={{ padding:"5px 12px",borderRadius:16,border:"none",
-                      background:type===t?SESSION_COLORS[t]:"#ebebeb",
-                      color:type===t?"#fff":"#333",
-                      fontSize:12,fontWeight:600,cursor:"pointer" }}>
-                    {SESSION_LABELS[t]}
-                  </button>
-                ))}
-              </div>
-            )}
-            {/* Expanded detail (only when not in schedule edit mode) */}
-            {isExpanded&&!scheduleEdit&&(
-              <div style={{ padding:"0 14px 14px" }}>
-                {mainSet
-                  ? <div style={{ fontSize:13,color:"#333",lineHeight:1.65,marginBottom:linked?10:0 }}>{mainSet}</div>
-                  : <div style={{ fontSize:12,color:"#bbb",fontStyle:"italic",marginBottom:linked?10:0 }}>No training details for this day.</div>
-                }
-                {/* Actual session panel */}
-                {linked&&(
-                  <div style={{ padding:"10px 12px",borderRadius:8,background:"#f9f9f7",border:"1px solid #eee" }}>
-                    <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6 }}>
-                      <span style={{ fontSize:11,color:"#aaa",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em" }}>Actual</span>
-                      {linked.score&&(
-                        <div style={{ textAlign:"right" }}>
-                          <span style={{ fontSize:16,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display:"flex",gap:10,flexWrap:"wrap",fontSize:12,color:"#555",marginBottom:6 }}>
-                      {linked.distance&&<span>{linked.distance} km</span>}
-                      {linked.avgPace&&<span>{linked.avgPace}/km</span>}
-                      {linked.avgHR&&<span>HR {linked.avgHR}</span>}
-                      {linked.rpe&&<span>RPE {linked.rpe}/10</span>}
-                    </div>
-                    {(()=>{
-                      const indicators = [];
-                      const tSecs = parsePace(weekPlan?.weekGoals?.targetPace);
-                      const aSecs = parsePace(linked.avgPace);
-                      if (tSecs&&aSecs) {
-                        const diff = aSecs - tSecs;
-                        indicators.push(diff<=0
-                          ? { label:`Pace on target (${secsTopace(Math.abs(diff))} ahead)`, color:"#0F6E56" }
-                          : { label:`Pace ${secsTopace(diff)} behind plan`, color:"#c00" });
-                      }
-                      const rpe = Number(linked.rpe);
-                      if (rpe) indicators.push(
-                        rpe<=5 ? { label:"RPE low — under-effort", color:"#b07000" }
-                        : rpe<=7 ? { label:"RPE controlled", color:"#0F6E56" }
-                        : rpe<=8 ? { label:"RPE high — check load", color:"#b07000" }
-                        : { label:"RPE very high — recovery needed", color:"#c00" }
-                      );
-                      return indicators.length ? (
-                        <div style={{ display:"flex",flexDirection:"column",gap:2,marginBottom:6 }}>
-                          {indicators.map((ind,j)=><span key={j} style={{ fontSize:11,fontWeight:600,color:ind.color }}>{ind.label}</span>)}
-                        </div>
-                      ) : null;
-                    })()}
-                    {linked.score?.verdict&&<div style={{ fontSize:12,color:"#666",fontStyle:"italic" }}>"{linked.score.verdict}"</div>}
+
+                {/* Schedule edit picker */}
+                {isPickerOpen&&(
+                  <div style={{ padding:"8px 14px 12px",borderTop:`1px solid ${color}22`,display:"flex",flexWrap:"wrap",gap:6 }} onClick={e=>e.stopPropagation()}>
+                    {SESSION_TYPES.map(t=>(
+                      <button key={t} onClick={()=>setDayTypeOverride(day,t)}
+                        style={{ padding:"5px 12px",borderRadius:16,border:"none",
+                          background:type===t?SESSION_COLORS[t]:"#ebebeb",
+                          color:type===t?"#fff":"#333",
+                          fontSize:12,fontWeight:600,cursor:"pointer" }}>
+                        {SESSION_LABELS[t]}
+                      </button>
+                    ))}
                   </div>
                 )}
-                {isRun&&(
-                  <button
-                    onClick={e=>{ e.stopPropagation(); onSessionTap(day); }}
-                    style={{ marginTop:10,padding:"7px 14px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE833",fontSize:13,fontWeight:600,cursor:"pointer" }}>
-                    Session detail →
-                  </button>
+
+                {/* Plan + Actual sections */}
+                {!isRest&&!scheduleEdit&&(
+                  <div style={{ padding:"0 14px 14px" }}>
+
+                    {/* PLAN section */}
+                    <div style={{ marginBottom:12 }}>
+                      <div style={{ fontSize:10,fontWeight:700,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5 }}>Plan</div>
+                      {dayGoal&&<div style={{ fontSize:12,color:"#888",marginBottom:5,fontStyle:"italic" }}>{dayGoal}</div>}
+                      {bullets.length>0 ? (
+                        <div style={{ display:"flex",flexDirection:"column",gap:4 }}>
+                          {bullets.map((b,j)=>(
+                            <div key={j} style={{ fontSize:13,color:"#333",display:"flex",gap:7,alignItems:"flex-start" }}>
+                              <span style={{ color,flexShrink:0,marginTop:1,lineHeight:1.5 }}>•</span>
+                              <span style={{ lineHeight:1.5 }}>{b}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize:12,color:"#bbb",fontStyle:"italic" }}>No training details yet.</div>
+                      )}
+                    </div>
+
+                    {/* ACTUAL section */}
+                    <div style={{ borderTop:"1px solid #f0f0ec",paddingTop:10 }}>
+                      <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8 }}>
+                        <div style={{ fontSize:10,fontWeight:700,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em" }}>Actual</div>
+                        {hasDone&&<span style={{ fontSize:11,fontWeight:700,color:"#0F6E56" }}>✓ Done</span>}
+                        {isMissed&&<span style={{ fontSize:11,fontWeight:600,color:"#c07000" }}>✗ Not logged</span>}
+                      </div>
+
+                      {isInlineForm ? (
+                        <div onClick={e=>e.stopPropagation()}>
+                          <LogForm
+                            initial={inlineFormDay.initial}
+                            onSave={d=>{ onSaveSession({ id:inlineFormDay.initial?.id||Date.now(), ...d, savedAt:new Date().toISOString() }); setInlineFormDay(null); }}
+                            onCancel={()=>setInlineFormDay(null)}
+                          />
+                        </div>
+                      ) : hasDone ? (
+                        <div>
+                          <div style={{ display:"flex",gap:10,flexWrap:"wrap",fontSize:13,color:"#333",marginBottom:6 }}>
+                            {linked.distance&&<span style={{ fontWeight:700 }}>{linked.distance} km</span>}
+                            {linked.avgPace&&<span>{linked.avgPace}/km</span>}
+                            {linked.avgHR&&<span>HR {linked.avgHR}</span>}
+                            {linked.rpe&&<span>RPE {linked.rpe}/10</span>}
+                            {linked.te&&<span>TE {linked.te}</span>}
+                          </div>
+                          {linked.score&&(
+                            <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:8 }}>
+                              <span style={{ fontSize:15,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>
+                              {linked.score.verdict&&<span style={{ fontSize:12,color:"#666",fontStyle:"italic" }}>"{linked.score.verdict}"</span>}
+                            </div>
+                          )}
+                          {onSaveSession&&(
+                            <button onClick={e=>{ e.stopPropagation(); setInlineFormDay({day,initial:linked}); }}
+                              style={{ padding:"6px 14px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE833",fontSize:12,fontWeight:600,cursor:"pointer" }}>
+                              Edit
+                            </button>
+                          )}
+                        </div>
+                      ) : isRun&&onSaveSession ? (
+                        <button onClick={e=>{ e.stopPropagation(); setInlineFormDay({day,initial:{type,date:dayDateStr}}); }}
+                          style={{ padding:"7px 14px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE833",fontSize:13,fontWeight:600,cursor:"pointer" }}>
+                          + Log this session
+                        </button>
+                      ) : (
+                        <div style={{ fontSize:12,color:"#ccc",fontStyle:"italic" }}>Nothing logged</div>
+                      )}
+                    </div>
+
+                  </div>
                 )}
+
+                {/* Rest day */}
+                {isRest&&!scheduleEdit&&(
+                  <div style={{ padding:"0 14px 12px",fontSize:12,color:"#ccc" }}>Rest day</div>
+                )}
+
               </div>
-            )}
+            </div>
           </div>
         );
       })}
@@ -895,36 +943,6 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
                 {s.te&&<span>· TE {s.te}</span>}
               </div>
 
-              {!selectMode&&(store.weekPlans||[]).length>0&&(
-                <div style={{ margin:"6px 0 2px" }}>
-                  <span style={{ fontSize:11,color:"#aaa",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em" }}>Link to plan</span>
-                  <select
-                    value={s.plannedWeekStart&&s.plannedDay?`${s.plannedWeekStart}:${s.plannedDay}`:""}
-                    onChange={e=>{ e.stopPropagation(); if(!e.target.value){onSaveSession({...s,plannedDay:null,plannedWeekStart:null,score:null});}else{const[ws,day]=e.target.value.split(":");onSaveSession({...s,plannedDay:day,plannedWeekStart:ws});} }}
-                    onClick={e=>e.stopPropagation()}
-                    style={{ display:"block",width:"100%",marginTop:4,fontSize:12,padding:"5px 8px",borderRadius:6,border:"1px solid #e0e0dc",background:"#fff" }}>
-                    <option value="">Not linked</option>
-                    {[...(store.weekPlans||[])].sort((a,b)=>b.weekStart.localeCompare(a.weekStart)).map(plan=>{
-                      const ws=plan.weekStart;
-                      const endDate=new Date(ws+"T00:00:00"); endDate.setDate(endDate.getDate()+6);
-                      const range=`${new Date(ws+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – ${endDate.toLocaleDateString("en-GB",{day:"numeric",month:"short"})}`;
-                      const runDays=DAY_LABELS.filter(d=>{const t=plan.weekGoals?.daySessions?.[d]?.type;return t&&t!=="rest"&&t!=="crossfit";});
-                      if(!runDays.length) return null;
-                      return (
-                        <optgroup key={ws} label={`Week of ${range}`}>
-                          {runDays.map(day=>{
-                            const ds=plan.weekGoals.daySessions[day];
-                            const dayDate=new Date(ws+"T00:00:00"); dayDate.setDate(dayDate.getDate()+DAY_LABELS.indexOf(day));
-                            const dateStr=dayDate.toLocaleDateString("en-GB",{day:"numeric",month:"short"});
-                            const preview=ds.mainSet?ds.mainSet.slice(0,35)+(ds.mainSet.length>35?"…":""):"";
-                            return <option key={`${ws}:${day}`} value={`${ws}:${day}`}>{day} {dateStr} — {SESSION_LABELS[ds.type]||ds.type}{preview?` — ${preview}`:""}</option>;
-                          })}
-                        </optgroup>
-                      );
-                    })}
-                  </select>
-                </div>
-              )}
 
               {s.notes&&<div style={{ fontSize:13,color:"#666",margin:"6px 0 8px",padding:"8px 10px",background:"#f9f9f7",borderRadius:6 }}>{s.notes}</div>}
 
@@ -1782,7 +1800,7 @@ Include: exact paces, HR zones (bpm), cadence targets, rep structure, rest.`);
   return (
     <div style={{ maxWidth:430,margin:"0 auto",minHeight:"100vh",display:"flex",flexDirection:"column",background:"#fff" }}>
       <div style={{ flex:1,overflowY:"auto",display:"flex",flexDirection:"column" }}>
-        {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onSessionTap={getSessionDetail} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={(weekStart,scheduleOrNull)=>{ const u={...(store.weekScheduleOverrides||{})}; if(scheduleOrNull===null){delete u[weekStart];}else{u[weekStart]=scheduleOrNull;} persist({weekScheduleOverrides:u}); }}/>}
+        {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={(weekStart,scheduleOrNull)=>{ const u={...(store.weekScheduleOverrides||{})}; if(scheduleOrNull===null){delete u[weekStart];}else{u[weekStart]=scheduleOrNull;} persist({weekScheduleOverrides:u}); }} onSaveSession={saveSession}/>}
         {screen==="session"&&<SessionScreen store={store} activeDay={activeDay} loading={loading} error={error} aiText={aiText} onBack={()=>{ setScreen("home"); setAiText(""); setActiveDay(null); }}/>}
         {screen==="log"&&<LogScreen store={store} loading={loading} error={error} aiText={aiText} stravaLoading={stravaLoading} stravaActivities={stravaActivities} onImportStrava={importFromStrava} onSaveSession={saveSession} onBulkSave={bulkSaveSessions} onBulkDelete={bulkDeleteSessions} onAnalyze={analyzeSession} editingSession={editingSession} setEditingSession={setEditingSession}/>}
         {screen==="progress"&&<ProgressScreen store={store}/>}
