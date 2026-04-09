@@ -325,8 +325,11 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
   const cur = new Date(getCurrentWeekStart() + "T00:00:00");
   const from = new Date(cur); from.setDate(from.getDate() - 42);
   const to = new Date(cur); to.setDate(to.getDate() + 56);
-  if (raceDate) { const rd = new Date(raceDate + "T00:00:00"); if (rd < to) { to.setTime(rd.getTime()); } }
+  const raceWeekStart = raceDate ? getWeekStart(new Date(raceDate + "T00:00:00")) : null;
+  if (raceDate) { const rd = new Date(raceDate + "T00:00:00"); to.setTime(rd.getTime()); }
   for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 7)) weeks.push(getWeekStart(d));
+  // Always include race week even if race is beyond default range
+  if (raceWeekStart && !weeks.includes(raceWeekStart)) weeks.push(raceWeekStart);
 
   useEffect(() => {
     if (activeRef.current && stripRef.current) {
@@ -346,10 +349,18 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
               .map(d=>({ day:d, type:plan.weekGoals.daySessions[d].type,
                 linked:(sessions||[]).some(s=>s.plannedDay===d&&s.plannedWeekStart===ws) }))
           : [];
+        const isCurrentWeek = ws===getCurrentWeekStart();
+        const isRaceWeek = raceWeekStart && ws===raceWeekStart;
+        const chipBorder = isActive?"#1B6FE8":isRaceWeek?"#e8a020":isCurrentWeek?"#93b8f5":"#eee";
+        const chipBg = isActive?"#f0f6ff":isRaceWeek?"#fff8ed":isCurrentWeek?"#f5f8ff":"#fff";
+        const labelColor = isActive?"#1B6FE8":isRaceWeek?"#c07000":isCurrentWeek?"#4a85d4":"#888";
         return (
           <button key={ws} ref={isActive?activeRef:null} onClick={()=>onSelect(ws)}
-            style={{ flexShrink:0,padding:"5px 9px",borderRadius:8,border:`1.5px solid ${isActive?"#1B6FE8":"#eee"}`,background:isActive?"#f0f6ff":"#fff",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3 }}>
-            <span style={{ fontSize:11,fontWeight:isActive?700:400,color:isActive?"#1B6FE8":"#888",whiteSpace:"nowrap" }}>{label}</span>
+            style={{ flexShrink:0,padding:"5px 9px",borderRadius:8,border:`1.5px solid ${chipBorder}`,background:chipBg,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2 }}>
+            {isRaceWeek&&<span style={{ fontSize:12,lineHeight:1 }}>🏁</span>}
+            <span style={{ fontSize:11,fontWeight:isActive||isRaceWeek?700:isCurrentWeek?600:400,color:labelColor,whiteSpace:"nowrap" }}>{label}</span>
+            {isRaceWeek&&!isActive&&<span style={{ fontSize:9,fontWeight:700,color:"#c07000",letterSpacing:"0.04em",lineHeight:1 }}>RACE</span>}
+            {isCurrentWeek&&!isActive&&!isRaceWeek&&<span style={{ fontSize:9,fontWeight:700,color:"#4a85d4",letterSpacing:"0.04em",lineHeight:1 }}>NOW</span>}
             <div style={{ display:"flex",gap:2,alignItems:"center" }}>
               {plannedDays.length>0
                 ? plannedDays.map(({day,type,linked})=>{
@@ -470,25 +481,44 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
       <WeekStrip weekPlans={store.weekPlans} sessions={store.sessions} activeWeekStart={activeWeekStart} onSelect={setActiveWeekStart} raceDate={store.profile.goalDate}/>
 
       {/* Arrow nav + week label */}
-      <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12 }}>
-        <button onClick={()=>shiftWeek(-1)} style={{ padding:"6px 12px",borderRadius:8,background:"none",border:"1px solid #eee",color:"#888",fontSize:14,cursor:"pointer" }}>‹</button>
-        <span style={{ fontSize:13,fontWeight:600,color:"#1a1a1a" }}>{weekRange}</span>
-        <button onClick={()=>shiftWeek(1)} style={{ padding:"6px 12px",borderRadius:8,background:"none",border:"1px solid #eee",color:"#888",fontSize:14,cursor:"pointer" }}>›</button>
+      {(()=>{ const currentWeekStart=getCurrentWeekStart(); return (
+      <div style={{ display:"grid",gridTemplateColumns:"1fr auto 1fr",alignItems:"center",marginBottom:12 }}>
+        <div/>
+        <div style={{ display:"flex",alignItems:"center",gap:4 }}>
+          <button onClick={()=>shiftWeek(-1)} style={{ padding:"6px 10px",borderRadius:8,background:"none",border:"1px solid #eee",color:"#888",fontSize:14,cursor:"pointer" }}>‹</button>
+          <span style={{ fontSize:13,fontWeight:600,color:"#1a1a1a",minWidth:120,textAlign:"center" }}>{weekRange}</span>
+          <button onClick={()=>shiftWeek(1)} style={{ padding:"6px 10px",borderRadius:8,background:"none",border:"1px solid #eee",color:"#888",fontSize:14,cursor:"pointer" }}>›</button>
+        </div>
+        <div style={{ display:"flex",justifyContent:"flex-end" }}>
+          {activeWeekStart!==currentWeekStart&&(
+            <button onClick={()=>setActiveWeekStart(currentWeekStart)}
+              style={{ fontSize:12,color:"#1B6FE8",background:"none",border:"1px solid #1B6FE8",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontWeight:600 }}>
+              Today
+            </button>
+          )}
+        </div>
       </div>
+      );})()}
 
       {/* Generate button */}
-      {!hasProfile?(
+      {(()=>{ const isPastWeek=activeWeekStart<getCurrentWeekStart(); return (
+      !hasProfile?(
         <div style={{ padding:16,borderRadius:10,background:"#fff8f0",border:"1px solid #fcd0b0",marginBottom:14 }}>
           <div style={{ fontSize:13,color:"#c04a00",fontWeight:700,marginBottom:4 }}>Set up your profile first</div>
           <div style={{ fontSize:13,color:"#666",marginBottom:10 }}>Add your goal and benchmarks to generate a personalised plan.</div>
           <button onClick={onGoProfile} style={{ padding:"8px 16px",borderRadius:8,background:"#1B6FE8",color:"white",border:"none",fontSize:13,fontWeight:700,cursor:"pointer" }}>Go to Profile →</button>
+        </div>
+      ):isPastWeek?(
+        <div style={{ padding:"10px 14px",borderRadius:10,background:"#f5f5f5",border:"1px solid #e0e0e0",marginBottom:12,display:"flex",alignItems:"center",gap:8 }}>
+          <span style={{ fontSize:16,lineHeight:1 }}>🔒</span>
+          <span style={{ fontSize:13,color:"#999" }}>Past week — plan generation not available</span>
         </div>
       ):(
         <button onClick={()=>onGeneratePlan(activeWeekStart)} disabled={loading}
           style={{ width:"100%",padding:14,borderRadius:10,background:loading?"#ccc":"#1B6FE8",color:"white",border:"none",fontSize:15,fontWeight:700,cursor:loading?"default":"pointer",marginBottom:12 }}>
           {loading?"Generating...":hasPlan?"Regenerate Week Plan":"Generate Week Plan"}
         </button>
-      )}
+      ));})()}
 
       {/* Week summary strip + edit schedule toggle on same row */}
       <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap" }}>
@@ -519,6 +549,7 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
         scheduleEdit={scheduleEdit}
         weekScheduleOverrides={store.weekScheduleOverrides||{}}
         onSaveScheduleOverride={onSaveScheduleOverride}
+        raceDate={store.profile.goalDate}
       />
     </div>
   );
@@ -526,7 +557,7 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
 
 // ── Week Day List ──
 
-function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride }) {
+function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride, raceDate }) {
   const [expandedDay, setExpandedDay] = useState(null);
   const [pickerDay, setPickerDay] = useState(null);
   const weekStartDate = new Date(weekStart + "T00:00:00");
@@ -550,6 +581,38 @@ function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, se
   return (
     <div style={{ display:"flex",flexDirection:"column",gap:6 }}>
       {DAY_LABELS.map((day, i) => {
+        const dayDate = new Date(weekStartDate);
+        dayDate.setDate(weekStartDate.getDate() + i);
+        const dateStr = dayDate.toLocaleDateString("en-GB", { day:"numeric", month:"short" });
+        const dayDateStr = `${dayDate.getFullYear()}-${String(dayDate.getMonth()+1).padStart(2,"0")}-${String(dayDate.getDate()).padStart(2,"0")}`;
+
+        // Don't show days after race date
+        if (raceDate && dayDateStr > raceDate) return null;
+
+        // Race day — special celebratory card
+        if (raceDate && dayDateStr === raceDate) {
+          const n = new Date(); const todayStr = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-${String(n.getDate()).padStart(2,"0")}`;
+          const isToday = dayDateStr === todayStr;
+          return (
+            <div key={day} style={{ borderRadius:10,overflow:"hidden",border:"2px solid #e8a020",background:"linear-gradient(135deg,#fff8ed 0%,#fff3d6 100%)" }}>
+              <div style={{ display:"flex" }}>
+                <div style={{ width:4,background:"linear-gradient(180deg,#e8a020,#f0c040)",flexShrink:0,borderRadius:"10px 0 0 10px" }}/>
+                <div style={{ flex:1,padding:"14px 14px" }}>
+                  <div style={{ display:"flex",alignItems:"center",gap:6 }}>
+                    <span style={{ fontSize:12,fontWeight:700,color:"#b07000",textTransform:"uppercase",letterSpacing:"0.05em",width:28 }}>{day}</span>
+                    <span style={{ fontSize:11,color:"#c08000" }}>{dateStr}</span>
+                    <span style={{ marginLeft:"auto",fontSize:13,fontWeight:800,color:"#b07000" }}>🏁 Race Day!</span>
+                    {isToday&&<span style={{ fontSize:10,fontWeight:800,color:"#b07000",letterSpacing:"0.06em" }}>TODAY</span>}
+                  </div>
+                  <div style={{ marginTop:8,fontSize:14,fontWeight:700,color:"#8a5a00",lineHeight:1.5 }}>
+                    This is what all the training was for. Go get it! 🏆
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
         const session = daySessions?.[day];
         const overrideType = weekScheduleOverrides?.[weekStart]?.[day];
         const baseScheduleType = { ...defaultProfile.schedule, ...(schedule||{}) }[day] || "rest";
@@ -562,10 +625,6 @@ function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, se
         const label = SESSION_LABELS[type] || type;
         const isExpanded = expandedDay === day;
         const isRun = type.startsWith("run");
-        const dayDate = new Date(weekStartDate);
-        dayDate.setDate(weekStartDate.getDate() + i);
-        const dateStr = dayDate.toLocaleDateString("en-GB", { day:"numeric", month:"short" });
-        const dayDateStr = `${dayDate.getFullYear()}-${String(dayDate.getMonth()+1).padStart(2,"0")}-${String(dayDate.getDate()).padStart(2,"0")}`;
         const n = new Date(); const todayStr = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-${String(n.getDate()).padStart(2,"0")}`;
         const isToday = dayDateStr === todayStr;
         // Find session linked to this planned day
@@ -578,14 +637,16 @@ function WeekDayList({ schedule, daySessions, today, weekStart, onSessionTap, se
             <div style={{ display:"flex" }}>
               <div style={{ width:4, background:color, flexShrink:0, borderRadius:"10px 0 0 10px" }}/>
               <div style={{ flex:1, padding:"11px 14px" }}>
-                <div style={{ display:"flex",alignItems:"center",gap:6 }}>
-                  <span style={{ fontSize:12,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.05em",width:28 }}>{day}</span>
-                  <span style={{ fontSize:11,color:"#bbb" }}>{dateStr}</span>
-                  <span style={{ marginLeft:"auto",fontSize:11,fontWeight:700,color,background:`${color}18`,padding:"2px 8px",borderRadius:20 }}>{label}</span>
-                  {isToday&&<span style={{ fontSize:10,color,fontWeight:800,letterSpacing:"0.06em" }}>TODAY</span>}
-                  {linked?.score&&<span style={{ fontSize:12,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>}
-                  {!scheduleEdit&&<span style={{ fontSize:13,color:"#ccc",marginLeft:2,display:"inline-block",transform:isExpanded?"rotate(90deg)":"none",transition:"transform 0.15s" }}>›</span>}
-                  {scheduleEdit&&<span style={{ fontSize:11,color:isPickerOpen?color:"#ccc",marginLeft:2 }}>{isPickerOpen?"▾":"✎"}</span>}
+                <div style={{ display:"flex",alignItems:"center",gap:6,minWidth:0 }}>
+                  <span style={{ fontSize:12,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.05em",width:28,flexShrink:0 }}>{day}</span>
+                  <span style={{ fontSize:11,color:"#bbb",flexShrink:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{dateStr}</span>
+                  <div style={{ display:"flex",alignItems:"center",gap:6,marginLeft:"auto",flexShrink:0 }}>
+                    <span style={{ fontSize:11,fontWeight:700,color,background:`${color}18`,padding:"2px 8px",borderRadius:20,whiteSpace:"nowrap" }}>{label}</span>
+                    {isToday&&<span style={{ fontSize:10,color,fontWeight:800,letterSpacing:"0.06em" }}>TODAY</span>}
+                    {linked?.score&&<span style={{ fontSize:12,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>}
+                    {!scheduleEdit&&<span style={{ fontSize:13,color:"#ccc",display:"inline-block",transform:isExpanded?"rotate(90deg)":"none",transition:"transform 0.15s" }}>›</span>}
+                    {scheduleEdit&&<span style={{ fontSize:11,color:isPickerOpen?color:"#ccc" }}>{isPickerOpen?"▾":"✎"}</span>}
+                  </div>
                 </div>
                 {/* Collapsed preview */}
                 {!isExpanded&&!scheduleEdit&&mainSet&&(
@@ -701,6 +762,23 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
   const [successMsg, setSuccessMsg] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [analysisSessionId, setAnalysisSessionId] = useState(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+
+  function toggleSelect(id) {
+    setSelected(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  }
+  function exitSelectMode() { setSelectMode(false); setSelected(new Set()); }
+  function deleteSelected() {
+    if (!window.confirm(`Delete ${selected.size} session${selected.size>1?"s":""}?`)) return;
+    selected.forEach(id => onSaveSession(null, id));
+    exitSelectMode();
+  }
+  function deleteAll() {
+    if (!window.confirm(`Delete all ${sessions.length} sessions? This cannot be undone.`)) return;
+    sessions.forEach(s => onSaveSession(null, s.id));
+    exitSelectMode();
+  }
 
   const sessions = [...(store.sessions||[])].sort((a,b)=>new Date(b.date)-new Date(a.date));
   const importedStravaIds = sessions.filter(s=>s.stravaId).map(s=>s.stravaId);
@@ -728,10 +806,20 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
           <div style={{ fontSize:13,color:"#888",marginTop:3 }}>{sessions.length} logged</div>
         </div>
         {!activeForm&&(
-          <button onClick={()=>setShowForm(true)}
-            style={{ padding:"9px 16px",borderRadius:10,background:"#1B6FE8",color:"white",border:"none",fontSize:14,fontWeight:700,cursor:"pointer" }}>
-            + Log Run
-          </button>
+          <div style={{ display:"flex",gap:8 }}>
+            {sessions.length>0&&(
+              <button onClick={()=>{ if(selectMode) exitSelectMode(); else setSelectMode(true); }}
+                style={{ padding:"9px 14px",borderRadius:10,background:selectMode?"#f0f6ff":"none",color:selectMode?"#1B6FE8":"#888",border:`1px solid ${selectMode?"#1B6FE8":"#e0e0e0"}`,fontSize:13,fontWeight:600,cursor:"pointer" }}>
+                {selectMode?"Cancel":"Select"}
+              </button>
+            )}
+            {!selectMode&&(
+              <button onClick={()=>setShowForm(true)}
+                style={{ padding:"9px 16px",borderRadius:10,background:"#1B6FE8",color:"white",border:"none",fontSize:14,fontWeight:700,cursor:"pointer" }}>
+                + Log Run
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -765,22 +853,33 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
       )}
 
       {!activeForm&&sessions.length>0&&(
-        <div style={{ display:"flex",flexDirection:"column",gap:10 }}>
-          {sessions.map(s=>(
-            <div key={s.id} style={{ padding:14,borderRadius:10,border:"1px solid #eee",background:"#fff" }}>
+        <div style={{ display:"flex",flexDirection:"column",gap:10,paddingBottom:selectMode?72:0 }}>
+          {sessions.map(s=>{
+            const isSelected = selected.has(s.id);
+            return (
+            <div key={s.id}
+              onClick={selectMode ? ()=>toggleSelect(s.id) : undefined}
+              style={{ padding:14,borderRadius:10,border:`1.5px solid ${isSelected?"#1B6FE8":"#eee"}`,background:isSelected?"#f0f6ff":"#fff",cursor:selectMode?"pointer":"default" }}>
               <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8 }}>
-                <div>
-                  <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:3,flexWrap:"wrap" }}>
-                    <div style={{ width:7,height:7,borderRadius:"50%",background:SESSION_COLORS[s.type]||"#888",flexShrink:0 }}/>
-                    <span style={{ fontSize:14,fontWeight:700,color:"#1a1a1a" }}>{SESSION_LABELS[s.type]||s.type}</span>
-                    {s.stravaId&&<span style={{ fontSize:10,padding:"2px 6px",borderRadius:4,background:"#FC4C0222",color:"#FC4C02",fontWeight:700 }}>Strava</span>}
-                    {s.plannedDay&&s.plannedWeekStart&&(()=>{const p=(store.weekPlans||[]).find(p=>p.weekStart===s.plannedWeekStart);const t=p?.weekGoals?.daySessions?.[s.plannedDay]?.type;return <Chip label={`Plan: ${s.plannedDay}`} color={SESSION_COLORS[t]||"#888780"}/>;})()}
-                  </div>
-                  <div style={{ fontSize:12,color:"#aaa" }}>
-                    {s.date}{s.time?` · ${s.time}`:""}{s.location?` · ${s.location}`:""}
+                <div style={{ display:"flex",alignItems:"flex-start",gap:10,flex:1,minWidth:0 }}>
+                  {selectMode&&(
+                    <div style={{ width:20,height:20,borderRadius:6,border:`2px solid ${isSelected?"#1B6FE8":"#ccc"}`,background:isSelected?"#1B6FE8":"#fff",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center" }}>
+                      {isSelected&&<span style={{ color:"#fff",fontSize:13,fontWeight:700,lineHeight:1 }}>✓</span>}
+                    </div>
+                  )}
+                  <div style={{ flex:1,minWidth:0 }}>
+                    <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:3,flexWrap:"wrap" }}>
+                      <div style={{ width:7,height:7,borderRadius:"50%",background:SESSION_COLORS[s.type]||"#888",flexShrink:0 }}/>
+                      <span style={{ fontSize:14,fontWeight:700,color:"#1a1a1a" }}>{SESSION_LABELS[s.type]||s.type}</span>
+                      {s.stravaId&&<span style={{ fontSize:10,padding:"2px 6px",borderRadius:4,background:"#FC4C0222",color:"#FC4C02",fontWeight:700 }}>Strava</span>}
+                      {s.plannedDay&&s.plannedWeekStart&&(()=>{const p=(store.weekPlans||[]).find(p=>p.weekStart===s.plannedWeekStart);const t=p?.weekGoals?.daySessions?.[s.plannedDay]?.type;return <Chip label={`Plan: ${s.plannedDay}`} color={SESSION_COLORS[t]||"#888780"}/>;})()}
+                    </div>
+                    <div style={{ fontSize:12,color:"#aaa" }}>
+                      {s.date}{s.time?` · ${s.time}`:""}{s.location?` · ${s.location}`:""}
+                    </div>
                   </div>
                 </div>
-                <div style={{ display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end" }}>
+                <div style={{ display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end",flexShrink:0 }}>
                   {s.avgPace&&<Chip label={s.avgPace+"/km"} color="#1B6FE8"/>}
                   {s.distance&&<Chip label={s.distance+"km"} color="#7C3AED"/>}
                   {s.score&&<span style={{ fontSize:12,fontWeight:800,padding:"3px 8px",borderRadius:6,background:s.score.value>=8?"#e8f8f0":s.score.value>=6?"#fff8e0":"#fff0f0",color:s.score.value>=8?"#0F6E56":s.score.value>=6?"#b07000":"#c00" }}>{s.score.value}/10</span>}
@@ -796,7 +895,7 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
                 {s.te&&<span>· TE {s.te}</span>}
               </div>
 
-              {(store.weekPlans||[]).length>0&&(
+              {!selectMode&&(store.weekPlans||[]).length>0&&(
                 <div style={{ margin:"6px 0 2px" }}>
                   <span style={{ fontSize:11,color:"#aaa",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em" }}>Link to plan</span>
                   <select
@@ -829,15 +928,17 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
 
               {s.notes&&<div style={{ fontSize:13,color:"#666",margin:"6px 0 8px",padding:"8px 10px",background:"#f9f9f7",borderRadius:6 }}>{s.notes}</div>}
 
-              <div style={{ display:"flex",gap:8,marginTop:8 }}>
-                <button onClick={()=>{ setEditingSession(s); setShowForm(false); }}
-                  style={{ flex:1,padding:"7px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE822",fontSize:13,fontWeight:600,cursor:"pointer" }}>Edit</button>
-                <button onClick={()=>{ setAnalysisSessionId(s.id); onAnalyze(s); }} disabled={loading&&analysisSessionId===s.id}
-                  style={{ flex:1,padding:"7px",borderRadius:8,background:"none",color:"#0F6E56",border:"1px solid #0F6E5622",fontSize:13,fontWeight:600,cursor:"pointer" }}>
-                  {loading&&analysisSessionId===s.id?"...":"Analyse"}</button>
-                <button onClick={()=>{ if(window.confirm("Delete this session?")) onSaveSession(null, s.id); }}
-                  style={{ flex:1,padding:"7px",borderRadius:8,background:"none",color:"#c00",border:"1px solid #fcc",fontSize:13,fontWeight:600,cursor:"pointer" }}>Delete</button>
-              </div>
+              {!selectMode&&(
+                <div style={{ display:"flex",gap:8,marginTop:8 }}>
+                  <button onClick={()=>{ setEditingSession(s); setShowForm(false); }}
+                    style={{ flex:1,padding:"7px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE822",fontSize:13,fontWeight:600,cursor:"pointer" }}>Edit</button>
+                  <button onClick={()=>{ setAnalysisSessionId(s.id); onAnalyze(s); }} disabled={loading&&analysisSessionId===s.id}
+                    style={{ flex:1,padding:"7px",borderRadius:8,background:"none",color:"#0F6E56",border:"1px solid #0F6E5622",fontSize:13,fontWeight:600,cursor:"pointer" }}>
+                    {loading&&analysisSessionId===s.id?"...":"Analyse"}</button>
+                  <button onClick={()=>{ if(window.confirm("Delete this session?")) onSaveSession(null, s.id); }}
+                    style={{ flex:1,padding:"7px",borderRadius:8,background:"none",color:"#c00",border:"1px solid #fcc",fontSize:13,fontWeight:600,cursor:"pointer" }}>Delete</button>
+                </div>
+              )}
 
               {s.analysis&&analysisSessionId===s.id&&!loading&&(
                 <div style={{ marginTop:12,paddingTop:12,borderTop:"1px solid #f0f0ec" }}>
@@ -845,10 +946,30 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
                 </div>
               )}
             </div>
-          ))}
+          );})}
         </div>
       )}
       {loading&&<Dots/>}
+
+      {/* Select mode action bar */}
+      {selectMode&&(
+        <div style={{ position:"sticky",bottom:0,left:0,right:0,background:"#fff",borderTop:"1px solid #eee",padding:"12px 16px",display:"flex",gap:8,alignItems:"center" }}>
+          <button onClick={()=>{ const allIds=new Set(sessions.map(s=>s.id)); setSelected(selected.size===sessions.length?new Set():allIds); }}
+            style={{ fontSize:13,color:"#555",background:"#f5f5f5",border:"none",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:600 }}>
+            {selected.size===sessions.length?"Deselect all":"Select all"}
+          </button>
+          <button
+            onClick={deleteSelected}
+            disabled={selected.size===0}
+            style={{ flex:1,padding:"10px",borderRadius:8,background:selected.size>0?"#c00":"#f5f5f5",color:selected.size>0?"#fff":"#bbb",border:"none",fontSize:13,fontWeight:700,cursor:selected.size>0?"pointer":"default" }}>
+            {selected.size>0?`Delete ${selected.size} selected`:"Select sessions"}
+          </button>
+          <button onClick={deleteAll}
+            style={{ fontSize:13,color:"#c00",background:"none",border:"1px solid #fcc",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap" }}>
+            Delete all
+          </button>
+        </div>
+      )}
     </div>
   );
 }
