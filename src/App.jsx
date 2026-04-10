@@ -4,6 +4,7 @@ import {
   parsePace, secsTopace, computeRacePace, computeGoalTime,
   getWeekStart, getCurrentWeekStart, getPlannedDay, getAutoLink,
   getWeeksToRace, findLinkedSession, sessionsForWeek, sessionInWeek,
+  weekRunSessions, countRunsPlanned,
   computeAutoScore, bulkDeleteSessions as utilBulkDelete,
   isDayAfterRace, isDayRaceDay, isWeekInPast,
 } from "./utils.js";
@@ -472,14 +473,12 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
 
       {/* Week summary bar + edit schedule toggle */}
       {(()=>{
-        const weekRuns = (store.sessions||[]).filter(s => sessionInWeek(s, activeWeekStart) && s.type?.startsWith("run") && parseFloat(s.distance||"") > 0);
+        const weekRuns = weekRunSessions(store.sessions, activeWeekStart);
         const actualKm = weekRuns.reduce((sum,s) => sum + (parseFloat(s.distance)||0), 0);
         const plannedKm = weekGoals?.totalDistance || 0;
         const pct = plannedKm > 0 ? Math.min(100, Math.round((actualKm/plannedKm)*100)) : 0;
         const runsDone = weekRuns.length;
-        const runsPlanned = weekGoals?.daySessions
-          ? Object.values(weekGoals.daySessions).filter(d => d?.type?.startsWith("run")).length
-          : 0;
+        const runsPlanned = countRunsPlanned(weekGoals?.daySessions);
         return (
           <div style={{ marginBottom:10 }}>
             {weekGoals&&(

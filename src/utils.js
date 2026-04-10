@@ -182,6 +182,30 @@ export function computeAutoScore(session, weekPlan) {
   return null;
 }
 
+// ── Week summary helpers ──────────────────────────────────────────────────────
+
+/**
+ * Returns sessions in a given week that are run-type and have a distance logged.
+ * Uses date-only matching (sessionInWeek) — does NOT count by plannedWeekStart,
+ * which would cause cross-week bleed when a session's plan link is stale.
+ */
+export function weekRunSessions(sessions, weekStart) {
+  return (sessions || []).filter(s =>
+    sessionInWeek(s, weekStart) &&
+    s.type?.startsWith("run") &&
+    parseFloat(s.distance || "") > 0
+  );
+}
+
+/**
+ * Counts the number of run-type days in a daySessions plan map.
+ * Only counts types starting with "run" — CrossFit and rest are excluded.
+ */
+export function countRunsPlanned(daySessions) {
+  if (!daySessions) return 0;
+  return Object.values(daySessions).filter(d => d?.type?.startsWith("run")).length;
+}
+
 // ── Bulk operations ───────────────────────────────────────────────────────────
 
 /** Return a new sessions array with the given IDs removed (single-pass, no stale-closure issues). */

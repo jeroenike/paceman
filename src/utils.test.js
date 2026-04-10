@@ -4,6 +4,7 @@ import {
   computeRacePace, computeGoalTime,
   getWeekStart, getPlannedDay, getAutoLink, getWeeksToRace,
   findLinkedSession, sessionInWeek, sessionsForWeek,
+  weekRunSessions, countRunsPlanned,
   computeAutoScore, bulkDeleteSessions,
   isDayAfterRace, isDayRaceDay, isWeekInPast,
   DAY_LABELS, SESSION_LABELS, SESSION_COLORS,
@@ -349,6 +350,131 @@ describe("isWeekInPast", () => {
     const current = getWeekStart(new Date().toISOString().split("T")[0]);
     expect(isWeekInPast(current)).toBe(false);
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// sessionInWeek — summary bar uses date-only matching (regression: no plannedWeekStart bleed)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("sessionInWeek — date-only matching", () => {
+  const weekStart = "2026-04-06";
+
+  it("returns true when session date falls in the target week", () =>
+    expect(sessionInWeek({ date: "2026-04-08" }, weekStart)).toBe(true));
+
+  it("returns false when session date is outside the target week, even if plannedWeekStart matches", () => {
+    // Regression: old summary bar used sessionsForWeek which accepted plannedWeekStart as fallback,
+    // causing sessions from other weeks to bleed into the wrong week's totals.
+    const session = { date: "2026-03-15", plannedWeekStart: weekStart };
+    expect(sessionInWeek(session, weekStart)).toBe(false);
+  });
+
+  it("returns false for a session in the following week", () =>
+    expect(sessionInWeek({ date: "2026-04-13" }, weekStart)).toBe(false));
+
+  it("returns false for missing date", () =>
+    expect(sessionInWeek({ plannedWeekStart: weekStart }, weekStart)).toBe(false));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// weekRunSessions — summary bar km/run totals (regression: excludes non-run types)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("weekRunSessions", () => {
+  const weekStart = "2026-04-06";
+  const sessions = [
+    { id: 1, date: "2026-04-07", type: "run_easy",      distance: "8.0" },
+    { id: 2, date: "2026-04-08", type: "crossfit",       distance: "0" },    // no distance
+    { id: 3, date: "2026-04-09", type: "run_threshold",  distance: "6.2" },
+    { id: 4, date: "2026-04-10", type: "crossfit",       distance: "5.0" },  // CrossFit with km
+    { id: 5, date: "2026-04-11", type: "rest",           distance: "" },
+    { id: 6, date: "2026-04-20", type: "run_easy",       distance: "10.0" }, // different week
+    // Regression: session linked by plan to this week but dated in another week
+    { id: 7, date: "2026-03-10", type: "run_long",       distance: "18.0", plannedWeekStart: weekStart },
+  ];
+
+  it("includes run_easy sessions with distance", () =>
+    expect(weekRunSessions(sessions, weekStart)).toContainEqual(expect.objectContaining({ id: 1 })));
+
+  it("includes run_threshold sessions", () =>
+    expect(weekRunSessions(sessions, weekStart)).toContainEqual(expect.objectContaining({ id: 3 })));
+
+  it("excludes crossfit sessions even when a distance is logged", () => {
+    // Regression: non-run types were being counted, inflating km and run totals.
+    const result = weekRunSessions(sessions, weekStart);
+    expect(result).not.toContainEqual(expect.objectContaining({ id: 4 }));
+  });
+
+  it("excludes rest sessions", () =>
+    expect(weekRunSessions(sessions, weekStart)).not.toContainEqual(expect.objectContaining({ id: 5 })));
+
+  it("excludes sessions from a different week by date", () =>
+    expect(weekRunSessions(sessions, weekStart)).not.toContainEqual(expect.objectContaining({ id: 6 })));
+
+  it("excludes sessions linked by plannedWeekStart but dated in another week", () => {
+    // Regression: old code used sessionsForWeek (plannedWeekStart fallback), so session 7
+    // would have been counted in this week's totals even though it happened in March.
+    expect(weekRunSessions(sessions, weekStart)).not.toContainEqual(expect.objectContaining({ id: 7 }));
+  });
+
+  it("returns exactly 2 sessions (run_easy + run_threshold) for this week", () =>
+    expect(weekRunSessions(sessions, weekStart)).toHaveLength(2));
+
+  it("sums km correctly for run sessions only", () => {
+    const runs = weekRunSessions(sessions, weekStart);
+    const total = runs.reduce((sum, s) => sum + parseFloat(s.distance), 0);
+    expect(total).toBeCloseTo(14.2);
+  });
+
+  it("returns empty array for null sessions", () =>
+    expect(weekRunSessions(null, weekStart)).toEqual([]));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// countRunsPlanned — planned run count (regression: excludes CrossFit and rest)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("countRunsPlanned", () => {
+  it("counts only run-type days", () => {
+    const daySessions = {
+      Mon: { type: "rest" },
+      Tue: { type: "run_threshold" },
+      Wed: { type: "crossfit" },
+      Thu: { type: "run_interval" },
+      Fri: { type: "crossfit" },
+      Sat: { type: "run_long" },
+      Sun: { type: "rest" },
+    };
+    // Regression: was counting all non-rest types (crossfit included), giving 5 instead of 3.
+    expect(countRunsPlanned(daySessions)).toBe(3);
+  });
+
+  it("excludes crossfit from count", () => {
+    const daySessions = {
+      Mon: { type: "crossfit" },
+      Tue: { type: "crossfit" },
+      Wed: { type: "run_easy" },
+    };
+    expect(countRunsPlanned(daySessions)).toBe(1);
+  });
+
+  it("returns 0 for all-rest week", () => {
+    const daySessions = { Mon: { type: "rest" }, Tue: { type: "rest" } };
+    expect(countRunsPlanned(daySessions)).toBe(0);
+  });
+
+  it("counts all run sub-types: run_easy, run_threshold, run_long, run_interval", () => {
+    const daySessions = {
+      Mon: { type: "run_easy" },
+      Tue: { type: "run_threshold" },
+      Sat: { type: "run_long" },
+      Sun: { type: "run_interval" },
+    };
+    expect(countRunsPlanned(daySessions)).toBe(4);
+  });
+
+  it("returns 0 for null daySessions", () =>
+    expect(countRunsPlanned(null)).toBe(0));
+
+  it("returns 0 for empty daySessions", () =>
+    expect(countRunsPlanned({})).toBe(0));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
