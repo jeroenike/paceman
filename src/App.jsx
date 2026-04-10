@@ -440,7 +440,7 @@ function WeekScheduleEditor({ weekStart, profile, weekScheduleOverrides, onSave 
 
 // ── Home Screen ──
 
-function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, onGoProfile, onSaveScheduleOverride, onSaveSession }) {
+function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGeneratePlan, onGenerateAllPlans, onGoProfile, onSaveScheduleOverride, onSaveSession }) {
   const [activeWeekStart, setActiveWeekStart] = useState(getCurrentWeekStart);
   const [scheduleEdit, setScheduleEdit] = useState(false);
   const goalLabel = store.profile.goal==="Custom..."?store.profile.goalCustom:store.profile.goal;
@@ -514,10 +514,18 @@ function HomeScreen({ store, today, loading, error, hasProfile, onGeneratePlan, 
           <span style={{ fontSize:13,color:"#999" }}>Past week — plan generation not available</span>
         </div>
       ):(
-        <button onClick={()=>onGeneratePlan(activeWeekStart)} disabled={loading}
-          style={{ width:"100%",padding:14,borderRadius:10,background:loading?"#ccc":"#1B6FE8",color:"white",border:"none",fontSize:15,fontWeight:700,cursor:loading?"default":"pointer",marginBottom:12 }}>
-          {loading?"Generating...":hasPlan?"Regenerate Week Plan":"Generate Week Plan"}
-        </button>
+        <div style={{ display:"flex",flexDirection:"column",gap:8,marginBottom:12 }}>
+          <button onClick={()=>onGeneratePlan(activeWeekStart)} disabled={loading}
+            style={{ width:"100%",padding:14,borderRadius:10,background:loading?"#ccc":"#1B6FE8",color:"white",border:"none",fontSize:15,fontWeight:700,cursor:loading?"default":"pointer" }}>
+            {loading&&!loadingMsg?"Generating…":hasPlan?"Regenerate This Week":"Generate This Week"}
+          </button>
+          {store.profile.goalDate&&(
+            <button onClick={onGenerateAllPlans} disabled={loading}
+              style={{ width:"100%",padding:12,borderRadius:10,background:loading?"#ccc":"#0F6E56",color:"white",border:"none",fontSize:14,fontWeight:700,cursor:loading?"default":"pointer" }}>
+              {loadingMsg||"Generate Full Plan to Race Day"}
+            </button>
+          )}
+        </div>
       ));})()}
 
       {/* Week summary bar + edit schedule toggle */}
@@ -735,6 +743,13 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                           </div>
                         ) : (
                           <div>
+                            {linked.type&&(
+                              <div style={{ marginBottom:7 }}>
+                                <span style={{ fontSize:11,fontWeight:700,color:SESSION_COLORS[linked.type]||"#888",background:`${SESSION_COLORS[linked.type]||"#888"}18`,padding:"2px 8px",borderRadius:20 }}>
+                                  {SESSION_LABELS[linked.type]||linked.type}
+                                </span>
+                              </div>
+                            )}
                             <div style={{ display:"flex",gap:10,flexWrap:"wrap",fontSize:13,color:"#333",marginBottom:6 }}>
                               {linked.distance&&<span style={{ fontWeight:700 }}>{linked.distance} km</span>}
                               {linked.avgPace&&<span>{linked.avgPace}/km</span>}
@@ -1595,6 +1610,7 @@ export default function App() {
   });
   const [screen, setScreen] = useState("home");
   const [loading, setLoading] = useState(false);
+  const [loadingMsg, setLoadingMsg] = useState("");
   const [aiText, setAiText] = useState("");
   const [error, setError] = useState("");
   const [activeDay, setActiveDay] = useState(null);
@@ -1706,74 +1722,134 @@ SCORE_JSON`);
     });
   }
 
-  async function generateWeekPlan(weekStart) {
-    await run(async () => {
-      const p = store.profile;
-      const goalLabel = p.goal==="Custom..."?p.goalCustom:p.goal;
-      const effectiveSchedule = (store.weekScheduleOverrides||{})[weekStart] || p.schedule;
+  // Core plan builder — pure async function, no state side-effects
+  async function buildWeekPlanGoals(weekStart, { prevWeekPlan, weekNumber, totalWeeks } = {}) {
+    const p = store.profile;
+    const goalLabel = p.goal==="Custom..."?p.goalCustom:p.goal;
+    const effectiveSchedule = (store.weekScheduleOverrides||{})[weekStart] || p.schedule;
 
-      const recentSessions = (store.sessions||[])
-        .sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5)
-        .map(s=>`${s.date}: ${SESSION_LABELS[s.type]||s.type}, ${s.distance?s.distance+"km, ":""}${s.elevation?"+"+s.elevation+"m, ":""}pace ${s.avgPace||"?"}, HR ${s.avgHR||"?"}, cadence ${s.cadence||"?"}, RPE ${s.rpe||"?"}`).join("\n");
+    const recentSessions = (store.sessions||[])
+      .sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5)
+      .map(s=>`${s.date}: ${SESSION_LABELS[s.type]||s.type}, ${s.distance?s.distance+"km, ":""}pace ${s.avgPace||"?"}, HR ${s.avgHR||"?"}, RPE ${s.rpe||"?"}`).join("\n");
 
-      const prompt = `Generate a detailed weekly training plan for week starting ${weekStart}.
+    // Periodization context
+    const weeksToRace = p.goalDate ? Math.ceil((new Date(p.goalDate)-new Date(weekStart+"T00:00:00"))/(1000*60*60*24*7)) : null;
+    const isTaper = weeksToRace !== null && weeksToRace <= 2;
+    const isPeak = weeksToRace !== null && weeksToRace === 3;
+    const isRecovery = weekNumber && weekNumber % 4 === 0 && !isTaper;
+    const weekPhase = isTaper ? "TAPER — reduce volume 30–40%, keep some intensity, prioritise freshness"
+      : isPeak ? "PEAK — highest volume/intensity week of the block"
+      : isRecovery ? "RECOVERY — reduce volume ~20%, easy effort, no hard sessions"
+      : "BUILD — progressive overload, slight increase from previous week";
 
+    const periodCtx = [
+      weekNumber && totalWeeks ? `Week ${weekNumber} of ${totalWeeks} in training block` : null,
+      weeksToRace !== null ? `${weeksToRace} week${weeksToRace!==1?"s":""} to race` : null,
+      `Phase: ${weekPhase}`,
+    ].filter(Boolean).join(" · ");
+
+    const prevWeekSummary = prevWeekPlan?.weekGoals ? (() => {
+      const g = prevWeekPlan.weekGoals;
+      const runDays = Object.entries(g.daySessions||{}).filter(([,v])=>v?.mainSet).map(([d,v])=>`${d}: ${v.mainSet}`).join("; ");
+      return `Previous week (${prevWeekPlan.weekStart}): ${g.totalDistance}km total, ${g.runsPlanned} runs, target pace ${g.targetPace||"n/a"}. Sessions: ${runDays}`;
+    })() : null;
+
+    const prompt = `Generate a detailed weekly training plan for week starting ${weekStart}.
+
+${periodCtx}
+${prevWeekSummary ? `\n${prevWeekSummary}\n` : ""}
 Athlete profile:
 - Goal: ${goalLabel} in ${p.goalTime}${p.goalDate?` on ${p.goalDate}`:""}
 - Level: ${p.experience}
 - Threshold pace: ${p.thresholdPace}/km | Race pace: ${p.racePace}/km | Long run pace: ${p.longRunPace}/km | Easy HR: ${p.easyHR} bpm
-- Schedule (FIXED — you MUST use exactly these session types per day in daySessions, no deviations): ${JSON.stringify(effectiveSchedule)}
+- Schedule (FIXED — use exactly these session types in daySessions): ${JSON.stringify(effectiveSchedule)}
 - Injuries: ${p.injuries.join(", ")||"none"}
 
-Recent logged sessions:
+Recent sessions:
 ${recentSessions||"No sessions logged yet"}
 
-Respond with ONLY the JSON block below — no other text:
+Coaching rules:
+- Build volume ~10% per week (unless recovery/taper week)
+- Long run = 30–40% of weekly volume
+- Hard sessions (threshold/intervals) max 2x/week, never back-to-back
+- Easy runs at HR ${p.easyHR||"below 145"} bpm, truly conversational
+- mainSet: specific targets — exact distance, pace, reps, rest, HR zone
+- Taper: drop volume, keep 1 quality session, race pace strides
+
+Respond with ONLY this JSON — no other text:
 WEEKGOALS_JSON
 {
   "totalDistance": <number km>,
   "longRunDistance": <number km or null>,
   "runsPlanned": <number>,
   "targetPace": "<mm:ss>",
-  "dayGoals": {
-    "Mon": "<short goal or null>",
-    "Tue": "<short goal>",
-    "Wed": "<short goal or null>",
-    "Thu": "<short goal>",
-    "Fri": "<short goal or null>",
-    "Sat": "<short goal or null>",
-    "Sun": "<short goal>"
-  },
+  "dayGoals": { "Mon":"<short goal or null>","Tue":"<short goal>","Wed":"<short goal or null>","Thu":"<short goal>","Fri":"<short goal or null>","Sat":"<short goal or null>","Sun":"<short goal>" },
   "daySessions": {
-    "Mon": { "type": "<session_type>", "mainSet": <"concise main set: reps/distance @ pace, rest, zone" or null> },
-    "Tue": { "type": "<session_type>", "mainSet": <"concise main set" or null> },
-    "Wed": { "type": "<session_type>", "mainSet": <"concise main set" or null> },
-    "Thu": { "type": "<session_type>", "mainSet": <"concise main set" or null> },
-    "Fri": { "type": "<session_type>", "mainSet": <"concise main set" or null> },
-    "Sat": { "type": "<session_type>", "mainSet": <"concise main set" or null> },
-    "Sun": { "type": "<session_type>", "mainSet": <"concise main set" or null> }
+    "Mon": { "type": "<session_type>", "mainSet": <"concrete targets" or null> },
+    "Tue": { "type": "<session_type>", "mainSet": <"concrete targets" or null> },
+    "Wed": { "type": "<session_type>", "mainSet": <"concrete targets" or null> },
+    "Thu": { "type": "<session_type>", "mainSet": <"concrete targets" or null> },
+    "Fri": { "type": "<session_type>", "mainSet": <"concrete targets" or null> },
+    "Sat": { "type": "<session_type>", "mainSet": <"concrete targets" or null> },
+    "Sun": { "type": "<session_type>", "mainSet": <"concrete targets" or null> }
   }
 }
 WEEKGOALS_JSON
 
 session_type must be one of: rest, run_threshold, run_easy, run_long, crossfit, run_interval.
-Each day's type in daySessions MUST exactly match the Schedule above — do not change or swap them.
-mainSet: null for rest/crossfit, otherwise 1–2 sentences with concrete targets (reps, pace, HR, rest).`;
+Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.`;
 
-      const r = await callClaude("You are a running coach AI. Respond with valid JSON only — no markdown, no prose, no commentary.", prompt);
+    const r = await callClaude("You are an elite running coach AI. Output valid JSON only — no markdown, no prose.", prompt);
+    const delimMatch = r.match(/WEEKGOALS_JSON\s*([\s\S]*?)\s*WEEKGOALS_JSON/);
+    const fenceMatch = r.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    const rawMatch = r.match(/\{[\s\S]*\}/);
+    const candidate = delimMatch?.[1] ?? fenceMatch?.[1] ?? rawMatch?.[0] ?? null;
+    let weekGoals = null;
+    if (candidate) { try { weekGoals = JSON.parse(candidate); } catch(e) {} }
+    return weekGoals;
+  }
 
-      // Parse the week goals JSON — try delimiters first, then code fence, then raw JSON
-      let weekGoals = null;
-      const delimMatch = r.match(/WEEKGOALS_JSON\s*([\s\S]*?)\s*WEEKGOALS_JSON/);
-      const fenceMatch = r.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-      const rawMatch = r.match(/\{[\s\S]*\}/);
-      const candidate = delimMatch?.[1] ?? fenceMatch?.[1] ?? rawMatch?.[0] ?? null;
-      if (candidate) { try { weekGoals = JSON.parse(candidate); } catch(e) {} }
-
+  async function generateWeekPlan(weekStart) {
+    await run(async () => {
+      // Include previous week's plan as context if available
+      const d = new Date(weekStart+"T00:00:00"); d.setDate(d.getDate()-7);
+      const prevWS = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+      const prevWeekPlan = (store.weekPlans||[]).find(p=>p.weekStart===prevWS) || null;
+      const weekGoals = await buildWeekPlanGoals(weekStart, { prevWeekPlan });
       const newPlan = { weekGoals, weekStart, generated:new Date().toISOString() };
       const existing = store.weekPlans||[];
       persist({ weekPlans:[...existing.filter(p=>p.weekStart!==weekStart), newPlan].sort((a,b)=>a.weekStart.localeCompare(b.weekStart)) });
     });
+  }
+
+  async function generateAllPlans() {
+    const raceDate = store.profile.goalDate;
+    if (!raceDate) { setError("Set a race date in your profile first."); return; }
+    setLoading(true); setError(""); setLoadingMsg("");
+    try {
+      // Build list of weeks: current → race week
+      const currentWS = getCurrentWeekStart();
+      const raceWS = getWeekStart(new Date(raceDate+"T00:00:00"));
+      const weeks = [];
+      let ws = currentWS;
+      while (ws <= raceWS) {
+        weeks.push(ws);
+        const nd = new Date(ws+"T00:00:00"); nd.setDate(nd.getDate()+7);
+        ws = `${nd.getFullYear()}-${String(nd.getMonth()+1).padStart(2,"0")}-${String(nd.getDate()).padStart(2,"0")}`;
+      }
+      const totalWeeks = weeks.length;
+      let allPlans = [...(store.weekPlans||[])];
+
+      for (let i = 0; i < weeks.length; i++) {
+        setLoadingMsg(`Generating week ${i+1} of ${totalWeeks}…`);
+        const prevPlan = i > 0 ? allPlans.find(p=>p.weekStart===weeks[i-1]) : null;
+        const weekGoals = await buildWeekPlanGoals(weeks[i], { prevWeekPlan:prevPlan, weekNumber:i+1, totalWeeks });
+        const newPlan = { weekGoals, weekStart:weeks[i], generated:new Date().toISOString() };
+        allPlans = [...allPlans.filter(p=>p.weekStart!==weeks[i]), newPlan].sort((a,b)=>a.weekStart.localeCompare(b.weekStart));
+        persist({ weekPlans:allPlans });
+      }
+    } catch(e) { setError(e.message); }
+    finally { setLoading(false); setLoadingMsg(""); }
   }
 
   async function getSessionDetail(day) {
@@ -1804,7 +1880,7 @@ Include: exact paces, HR zones (bpm), cadence targets, rep structure, rest.`);
   return (
     <div style={{ maxWidth:430,margin:"0 auto",minHeight:"100vh",display:"flex",flexDirection:"column",background:"#fff" }}>
       <div style={{ flex:1,overflowY:"auto",display:"flex",flexDirection:"column" }}>
-        {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={(weekStart,scheduleOrNull)=>{ const u={...(store.weekScheduleOverrides||{})}; if(scheduleOrNull===null){delete u[weekStart];}else{u[weekStart]=scheduleOrNull;} persist({weekScheduleOverrides:u}); }} onSaveSession={saveSession}/>}
+        {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} loadingMsg={loadingMsg} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onGenerateAllPlans={generateAllPlans} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={(weekStart,scheduleOrNull)=>{ const u={...(store.weekScheduleOverrides||{})}; if(scheduleOrNull===null){delete u[weekStart];}else{u[weekStart]=scheduleOrNull;} persist({weekScheduleOverrides:u}); }} onSaveSession={saveSession}/>}
         {screen==="session"&&<SessionScreen store={store} activeDay={activeDay} loading={loading} error={error} aiText={aiText} onBack={()=>{ setScreen("home"); setAiText(""); setActiveDay(null); }}/>}
         {screen==="log"&&<LogScreen store={store} loading={loading} error={error} aiText={aiText} stravaLoading={stravaLoading} stravaActivities={stravaActivities} onImportStrava={importFromStrava} onSaveSession={saveSession} onBulkSave={bulkSaveSessions} onBulkDelete={bulkDeleteSessions} onAnalyze={analyzeSession} editingSession={editingSession} setEditingSession={setEditingSession}/>}
         {screen==="progress"&&<ProgressScreen store={store}/>}
