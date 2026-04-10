@@ -822,6 +822,8 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
   function handleBulkSave(sessions) {
     onBulkSave(sessions);
     setSuccessMsg(`${sessions.length} run${sessions.length>1?"s":""} logged`);
+    setShowForm(false);
+    setEditingSession(null);
     setTimeout(()=>setSuccessMsg(""),3000);
   }
 
