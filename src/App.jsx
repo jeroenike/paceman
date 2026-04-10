@@ -343,11 +343,19 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
         const plan = (weekPlans||[]).find(p=>p.weekStart===ws);
         const isActive = ws===activeWeekStart;
         const label = new Date(ws+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"});
-        // One dot per planned non-rest day; filled = linked session exists for that exact slot
+        // One dot per planned run day; filled = session found by date (or fallback link)
+        const wsDate = new Date(ws+"T00:00:00");
         const plannedDays = plan
           ? DAY_LABELS.filter(d=>{ const t=plan.weekGoals?.daySessions?.[d]?.type; return t&&t.startsWith("run"); })
-              .map(d=>({ day:d, type:plan.weekGoals.daySessions[d].type,
-                linked:(sessions||[]).some(s=>s.plannedDay===d&&s.plannedWeekStart===ws) }))
+              .map(d=>{
+                const idx = DAY_LABELS.indexOf(d);
+                const dd = new Date(wsDate); dd.setDate(wsDate.getDate()+idx);
+                const dayStr = `${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,"0")}-${String(dd.getDate()).padStart(2,"0")}`;
+                const linked = (sessions||[]).some(s=>
+                  s.date===dayStr || (s.plannedDay===d&&s.plannedWeekStart===ws)
+                );
+                return { day:d, type:plan.weekGoals.daySessions[d].type, linked };
+              })
           : [];
         const isCurrentWeek = ws===getCurrentWeekStart();
         const isRaceWeek = raceWeekStart && ws===raceWeekStart;
@@ -530,7 +538,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
 
       {/* Week summary bar + edit schedule toggle */}
       {(()=>{
-        const weekSessions = (store.sessions||[]).filter(s => s.plannedWeekStart === activeWeekStart && parseFloat(s.distance||"") > 0);
+        const weekSessions = (store.sessions||[]).filter(s => (s.plannedWeekStart===activeWeekStart || getWeekStart(s.date)===activeWeekStart) && parseFloat(s.distance||"") > 0);
         const actualKm = weekSessions.reduce((sum,s) => sum + (parseFloat(s.distance)||0), 0);
         const plannedKm = weekGoals?.totalDistance || 0;
         const pct = plannedKm > 0 ? Math.min(100, Math.round((actualKm/plannedKm)*100)) : 0;
