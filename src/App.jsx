@@ -1836,13 +1836,22 @@ DAY_JSON`
     if (changedDay && newType) {
       const hasPlan = (store.weekPlans || []).some(p => p.weekStart === weekStart && p.weekGoals);
       if (hasPlan) {
+        // Compute the calendar date of this day within the week
+        const dayIdx = DAY_LABELS.indexOf(changedDay);
+        const dayDate = new Date(weekStart + "T00:00:00");
+        dayDate.setDate(dayDate.getDate() + dayIdx);
+        const dayDateStr = `${dayDate.getFullYear()}-${String(dayDate.getMonth()+1).padStart(2,"0")}-${String(dayDate.getDate()).padStart(2,"0")}`;
+        const todayStr = new Date().toISOString().split("T")[0];
+        const isDayPast = dayDateStr < todayStr;
+
         if (!newType.startsWith("run")) {
-          // Rest or CrossFit — clear the day's plan immediately
+          // Rest or CrossFit — clear the day's plan immediately (allowed even for past days)
           clearDayPlan(weekStart, changedDay, newType);
-        } else {
-          // Run type — regenerate just this day via AI
+        } else if (!isDayPast) {
+          // Run type and day is today or future — regenerate via AI
           generateDayPlan(weekStart, changedDay, newType);
         }
+        // Run type but day is in the past — leave existing plan as-is (locked)
       }
     }
   }
