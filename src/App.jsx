@@ -3,7 +3,7 @@ import {
   DAY_LABELS, SESSION_TYPES, SESSION_COLORS, SESSION_LABELS, RACE_DISTANCES,
   parsePace, secsTopace, computeRacePace, computeGoalTime,
   getWeekStart, getCurrentWeekStart, getPlannedDay, getAutoLink,
-  getWeeksToRace, findLinkedSession, sessionsForWeek,
+  getWeeksToRace, findLinkedSession, sessionsForWeek, sessionInWeek,
   computeAutoScore, bulkDeleteSessions as utilBulkDelete,
   isDayAfterRace, isDayRaceDay, isWeekInPast,
 } from "./utils.js";
@@ -390,6 +390,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
   const activePlan = (store.weekPlans||[]).find(p=>p.weekStart===activeWeekStart)??null;
   const weekGoals = activePlan?.weekGoals;
   const hasPlan = !!activePlan;
+  const isPastWeek = activeWeekStart < getCurrentWeekStart();
 
   // Week date range label
   const weekStartDate = new Date(activeWeekStart+"T00:00:00");
@@ -442,7 +443,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
       );})()}
 
       {/* Generate button */}
-      {(()=>{ const isPastWeek=activeWeekStart<getCurrentWeekStart(); return (
+      {(()=>{ return (
       !hasProfile?(
         <div style={{ padding:16,borderRadius:10,background:"#fff8f0",border:"1px solid #fcd0b0",marginBottom:14 }}>
           <div style={{ fontSize:13,color:"#c04a00",fontWeight:700,marginBottom:4 }}>Set up your profile first</div>
@@ -471,12 +472,14 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
 
       {/* Week summary bar + edit schedule toggle */}
       {(()=>{
-        const weekSessions = sessionsForWeek(store.sessions, activeWeekStart).filter(s => parseFloat(s.distance||"") > 0);
+        const weekSessions = (store.sessions||[]).filter(s => sessionInWeek(s, activeWeekStart) && parseFloat(s.distance||"") > 0);
         const actualKm = weekSessions.reduce((sum,s) => sum + (parseFloat(s.distance)||0), 0);
         const plannedKm = weekGoals?.totalDistance || 0;
         const pct = plannedKm > 0 ? Math.min(100, Math.round((actualKm/plannedKm)*100)) : 0;
         const runsDone = weekSessions.length;
-        const runsPlanned = weekGoals?.runsPlanned || 0;
+        const runsPlanned = weekGoals?.daySessions
+          ? Object.values(weekGoals.daySessions).filter(d => d?.type && d.type !== "rest").length
+          : 0;
         return (
           <div style={{ marginBottom:10 }}>
             {weekGoals&&(
@@ -493,7 +496,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
                 </div>
               </div>
             )}
-            {hasProfile&&(
+            {hasProfile&&!isPastWeek&&(
               <div style={{ display:"flex",justifyContent:"flex-end" }}>
                 {scheduleEdit
                   ? <button onClick={()=>setScheduleEdit(false)} style={{ fontSize:12,fontWeight:700,color:"#1B6FE8",background:"#f0f6ff",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer" }}>Done</button>
@@ -671,7 +674,16 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                       <div style={{ borderTop:"1px solid #f0f0ec",paddingTop:10 }}>
                         <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8 }}>
                           <div style={{ fontSize:10,fontWeight:700,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em" }}>Actual</div>
-                          {hasDone&&<span style={{ fontSize:11,fontWeight:700,color:"#0F6E56" }}>✓ Done</span>}
+                          {hasDone&&(
+                            <div style={{ display:"flex",alignItems:"center",gap:6 }}>
+                              {linked?.type&&(
+                                <span style={{ fontSize:11,fontWeight:700,color:SESSION_COLORS[linked.type]||"#888",background:`${SESSION_COLORS[linked.type]||"#888"}18`,padding:"2px 8px",borderRadius:20 }}>
+                                  {SESSION_LABELS[linked.type]||linked.type}
+                                </span>
+                              )}
+                              <span style={{ fontSize:11,fontWeight:700,color:"#0F6E56" }}>✓ Done</span>
+                            </div>
+                          )}
                         </div>
                         {isInlineForm ? (
                           <div onClick={e=>e.stopPropagation()}>
@@ -683,13 +695,6 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                           </div>
                         ) : (
                           <div>
-                            {linked.type&&(
-                              <div style={{ marginBottom:7 }}>
-                                <span style={{ fontSize:11,fontWeight:700,color:SESSION_COLORS[linked.type]||"#888",background:`${SESSION_COLORS[linked.type]||"#888"}18`,padding:"2px 8px",borderRadius:20 }}>
-                                  {SESSION_LABELS[linked.type]||linked.type}
-                                </span>
-                              </div>
-                            )}
                             <div style={{ display:"flex",gap:10,flexWrap:"wrap",fontSize:13,color:"#333",marginBottom:6 }}>
                               {linked.distance&&<span style={{ fontWeight:700 }}>{linked.distance} km</span>}
                               {linked.avgPace&&<span>{linked.avgPace}/km</span>}
@@ -711,6 +716,21 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                             )}
                           </div>
                         )}
+                      </div>
+                    )}
+
+                    {/* Missed session — show Rest as actual */}
+                    {isMissed&&!isInlineForm&&(
+                      <div style={{ borderTop:"1px solid #f0f0ec",paddingTop:10,marginBottom:4 }}>
+                        <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between" }}>
+                          <div style={{ fontSize:10,fontWeight:700,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em" }}>Actual</div>
+                          <div style={{ display:"flex",alignItems:"center",gap:6 }}>
+                            <span style={{ fontSize:11,fontWeight:700,color:SESSION_COLORS["rest"],background:`${SESSION_COLORS["rest"]}18`,padding:"2px 8px",borderRadius:20 }}>
+                              {SESSION_LABELS["rest"]}
+                            </span>
+                            <span style={{ fontSize:11,fontWeight:600,color:"#ccc" }}>✗ Not logged</span>
+                          </div>
+                        </div>
                       </div>
                     )}
 
