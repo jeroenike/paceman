@@ -612,10 +612,12 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
         const bullets = parseMainSet(mainSet);
         const dayGoal = weekPlan?.weekGoals?.dayGoals?.[day];
 
+        const isEditLocked = scheduleEdit && isPast;
+
         return (
           <div key={day}
-            onClick={scheduleEdit ? ()=>setPickerDay(pickerDay===day?null:day) : undefined}
-            style={{ borderRadius:10,overflow:"hidden",background:cardBg,border:cardBorder,cursor:scheduleEdit?"pointer":"default" }}>
+            onClick={scheduleEdit && !isPast ? ()=>setPickerDay(pickerDay===day?null:day) : undefined}
+            style={{ borderRadius:10,overflow:"hidden",background:cardBg,border:cardBorder,cursor:scheduleEdit&&!isPast?"pointer":"default" }}>
             <div style={{ display:"flex" }}>
               <div style={{ width:4,background:color,flexShrink:0,borderRadius:"10px 0 0 10px",alignSelf:"stretch" }}/>
               <div style={{ flex:1,minWidth:0 }}>
@@ -627,7 +629,8 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                   {isToday&&<span style={{ fontSize:10,color,fontWeight:800,letterSpacing:"0.06em" }}>TODAY</span>}
                   <div style={{ marginLeft:"auto",display:"flex",alignItems:"center",gap:6 }}>
                     <span style={{ fontSize:11,fontWeight:700,color,background:`${color}18`,padding:"2px 8px",borderRadius:20,whiteSpace:"nowrap" }}>{label}</span>
-                    {scheduleEdit&&<span style={{ fontSize:11,color:isPickerOpen?color:"#ccc" }}>{isPickerOpen?"▾":"✎"}</span>}
+                    {scheduleEdit&&!isPast&&<span style={{ fontSize:11,color:isPickerOpen?color:"#ccc" }}>{isPickerOpen?"▾":"✎"}</span>}
+                    {isEditLocked&&<span style={{ fontSize:11,color:"#ddd" }}>🔒</span>}
                   </div>
                 </div>
 
