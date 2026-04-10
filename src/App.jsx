@@ -645,7 +645,8 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
         const isRest = type === "rest";
         const isToday = dayDateStr === todayStr;
         const isPast = dayDateStr < todayStr;
-        const linked = sessions?.find(s => s.plannedDay === day && s.plannedWeekStart === weekPlan?.weekStart);
+        const linked = sessions?.find(s => s.date === dayDateStr)
+          ?? sessions?.find(s => s.plannedDay === day && s.plannedWeekStart === weekPlan?.weekStart);
         const hasDone = !!linked && !!parseFloat(linked.distance||"");
         const isMissed = isPast && !isRest && !hasDone;
         const isPickerOpen = scheduleEdit && pickerDay === day;
@@ -717,53 +718,56 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                       )}
                     </div>
 
-                    {/* ACTUAL section */}
-                    <div style={{ borderTop:"1px solid #f0f0ec",paddingTop:10 }}>
-                      <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8 }}>
-                        <div style={{ fontSize:10,fontWeight:700,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em" }}>Actual</div>
-                        {hasDone&&<span style={{ fontSize:11,fontWeight:700,color:"#0F6E56" }}>✓ Done</span>}
-                        {isMissed&&<span style={{ fontSize:11,fontWeight:600,color:"#c07000" }}>✗ Not logged</span>}
-                      </div>
-
-                      {isInlineForm ? (
-                        <div onClick={e=>e.stopPropagation()}>
-                          <LogForm
-                            initial={inlineFormDay.initial}
-                            onSave={d=>{ onSaveSession({ id:inlineFormDay.initial?.id||Date.now(), ...d, savedAt:new Date().toISOString() }); setInlineFormDay(null); }}
-                            onCancel={()=>setInlineFormDay(null)}
-                          />
+                    {/* ACTUAL section — only when a session is logged or inline form is open */}
+                    {(hasDone||isInlineForm)&&(
+                      <div style={{ borderTop:"1px solid #f0f0ec",paddingTop:10 }}>
+                        <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8 }}>
+                          <div style={{ fontSize:10,fontWeight:700,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em" }}>Actual</div>
+                          {hasDone&&<span style={{ fontSize:11,fontWeight:700,color:"#0F6E56" }}>✓ Done</span>}
                         </div>
-                      ) : hasDone ? (
-                        <div>
-                          <div style={{ display:"flex",gap:10,flexWrap:"wrap",fontSize:13,color:"#333",marginBottom:6 }}>
-                            {linked.distance&&<span style={{ fontWeight:700 }}>{linked.distance} km</span>}
-                            {linked.avgPace&&<span>{linked.avgPace}/km</span>}
-                            {linked.avgHR&&<span>HR {linked.avgHR}</span>}
-                            {linked.rpe&&<span>RPE {linked.rpe}/10</span>}
-                            {linked.te&&<span>TE {linked.te}</span>}
+                        {isInlineForm ? (
+                          <div onClick={e=>e.stopPropagation()}>
+                            <LogForm
+                              initial={inlineFormDay.initial}
+                              onSave={d=>{ onSaveSession({ id:inlineFormDay.initial?.id||Date.now(), ...d, savedAt:new Date().toISOString() }); setInlineFormDay(null); }}
+                              onCancel={()=>setInlineFormDay(null)}
+                            />
                           </div>
-                          {linked.score&&(
-                            <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:8 }}>
-                              <span style={{ fontSize:15,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>
-                              {linked.score.verdict&&<span style={{ fontSize:12,color:"#666",fontStyle:"italic" }}>"{linked.score.verdict}"</span>}
+                        ) : (
+                          <div>
+                            <div style={{ display:"flex",gap:10,flexWrap:"wrap",fontSize:13,color:"#333",marginBottom:6 }}>
+                              {linked.distance&&<span style={{ fontWeight:700 }}>{linked.distance} km</span>}
+                              {linked.avgPace&&<span>{linked.avgPace}/km</span>}
+                              {linked.avgHR&&<span>HR {linked.avgHR}</span>}
+                              {linked.rpe&&<span>RPE {linked.rpe}/10</span>}
+                              {linked.te&&<span>TE {linked.te}</span>}
                             </div>
-                          )}
-                          {onSaveSession&&(
-                            <button onClick={e=>{ e.stopPropagation(); setInlineFormDay({day,initial:linked}); }}
-                              style={{ padding:"6px 14px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE833",fontSize:12,fontWeight:600,cursor:"pointer" }}>
-                              Edit
-                            </button>
-                          )}
-                        </div>
-                      ) : isRun&&onSaveSession ? (
+                            {linked.score&&(
+                              <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:8 }}>
+                                <span style={{ fontSize:15,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>
+                                {linked.score.verdict&&<span style={{ fontSize:12,color:"#666",fontStyle:"italic" }}>"{linked.score.verdict}"</span>}
+                              </div>
+                            )}
+                            {onSaveSession&&(
+                              <button onClick={e=>{ e.stopPropagation(); setInlineFormDay({day,initial:linked}); }}
+                                style={{ padding:"6px 14px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE833",fontSize:12,fontWeight:600,cursor:"pointer" }}>
+                                Edit
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Log button — shown below plan when nothing logged yet */}
+                    {!hasDone&&!isInlineForm&&isRun&&onSaveSession&&(
+                      <div style={{ marginTop:4 }}>
                         <button onClick={e=>{ e.stopPropagation(); setInlineFormDay({day,initial:{type,date:dayDateStr}}); }}
                           style={{ padding:"7px 14px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE833",fontSize:13,fontWeight:600,cursor:"pointer" }}>
                           + Log this session
                         </button>
-                      ) : (
-                        <div style={{ fontSize:12,color:"#ccc",fontStyle:"italic" }}>Nothing logged</div>
-                      )}
-                    </div>
+                      </div>
+                    )}
 
                   </div>
                 )}
@@ -1561,7 +1565,7 @@ function ProfileScreen({ store, persist, onSaved }) {
 // ── Nav ──
 
 function NavBar({ screen, onNav }) {
-  const nav = [{id:"home",label:"Plan",icon:"▦"},{id:"log",label:"Sessions",icon:"⊕"},{id:"progress",label:"Progress",icon:"↗"},{id:"profile",label:"Profile",icon:"◉"}];
+  const nav = [{id:"home",label:"Training",icon:"▦"},{id:"log",label:"Sessions",icon:"⊕"},{id:"progress",label:"Progress",icon:"↗"},{id:"profile",label:"Profile",icon:"◉"}];
   return (
     <div style={{ position:"sticky",bottom:0,background:"#fff",borderTop:"1px solid #eee",display:"flex",justifyContent:"space-around",padding:"8px 0 env(safe-area-inset-bottom, 12px)",zIndex:100 }}>
       {nav.map(n=>(
