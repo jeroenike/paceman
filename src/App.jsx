@@ -472,13 +472,13 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
 
       {/* Week summary bar + edit schedule toggle */}
       {(()=>{
-        const weekSessions = (store.sessions||[]).filter(s => sessionInWeek(s, activeWeekStart) && parseFloat(s.distance||"") > 0);
-        const actualKm = weekSessions.reduce((sum,s) => sum + (parseFloat(s.distance)||0), 0);
+        const weekRuns = (store.sessions||[]).filter(s => sessionInWeek(s, activeWeekStart) && s.type?.startsWith("run") && parseFloat(s.distance||"") > 0);
+        const actualKm = weekRuns.reduce((sum,s) => sum + (parseFloat(s.distance)||0), 0);
         const plannedKm = weekGoals?.totalDistance || 0;
         const pct = plannedKm > 0 ? Math.min(100, Math.round((actualKm/plannedKm)*100)) : 0;
-        const runsDone = weekSessions.length;
+        const runsDone = weekRuns.length;
         const runsPlanned = weekGoals?.daySessions
-          ? Object.values(weekGoals.daySessions).filter(d => d?.type && d.type !== "rest").length
+          ? Object.values(weekGoals.daySessions).filter(d => d?.type?.startsWith("run")).length
           : 0;
         return (
           <div style={{ marginBottom:10 }}>
