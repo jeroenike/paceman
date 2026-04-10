@@ -3,7 +3,7 @@ import {
   DAY_LABELS, SESSION_TYPES, SESSION_COLORS, SESSION_LABELS, RACE_DISTANCES,
   parsePace, secsTopace, computeRacePace, computeGoalTime,
   getWeekStart, getCurrentWeekStart, getPlannedDay, getAutoLink,
-  getWeeksToRace, findLinkedSession, sessionsForWeek, sessionInWeek,
+  getWeeksToRace, findLinkedSession, findLinkedSessions, sessionsForWeek, sessionInWeek,
   weekRunSessions, countRunsPlanned,
   computeAutoScore, bulkDeleteSessions as utilBulkDelete,
   isDayAfterRace, isDayRaceDay, isWeekInPast,
@@ -605,11 +605,12 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
         const isRest = type === "rest";
         const isToday = dayDateStr === todayStr;
         const isPast = dayDateStr < todayStr;
-        const linked = findLinkedSession(sessions, dayDateStr, day, weekPlan?.weekStart);
-        const hasDone = !!linked && !!parseFloat(linked.distance||"");
+        const linkedSessions = findLinkedSessions(sessions, dayDateStr, day, weekPlan?.weekStart);
+        const hasDone = linkedSessions.some(s => parseFloat(s.distance||"") > 0);
         const isMissed = isPast && !isRest && !hasDone;
         const isPickerOpen = scheduleEdit && pickerDay === day;
-        const isInlineForm = inlineFormDay?.day === day;
+        // Inline form keyed by sessionId: null = new session, id = editing existing
+        const isNewSessionForm = inlineFormDay?.day === day && !inlineFormDay?.sessionId;
 
         let cardBg, cardBorder;
         if (isPickerOpen) { cardBg = "#fff"; cardBorder = `1.5px solid ${color}`; }
@@ -659,79 +660,87 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                 )}
 
                 {/* Plan + Actual sections */}
-                {!isRest&&!scheduleEdit&&(
+                {!scheduleEdit&&(
                   <div style={{ padding:"0 14px 14px" }}>
 
-                    {/* PLAN section */}
-                    <div style={{ marginBottom:12 }}>
-                      <div style={{ fontSize:10,fontWeight:700,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5 }}>Plan</div>
-                      {dayGoal&&<div style={{ fontSize:12,color:"#888",marginBottom:5,fontStyle:"italic" }}>{dayGoal}</div>}
-                      {bullets.length>0 ? (
-                        <div style={{ display:"flex",flexDirection:"column",gap:4 }}>
-                          {bullets.map((b,j)=>(
-                            <div key={j} style={{ fontSize:13,color:"#333",display:"flex",gap:7,alignItems:"flex-start" }}>
-                              <span style={{ color,flexShrink:0,marginTop:1,lineHeight:1.5 }}>•</span>
-                              <span style={{ lineHeight:1.5 }}>{b}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div style={{ fontSize:12,color:"#bbb",fontStyle:"italic" }}>No training details yet.</div>
-                      )}
-                    </div>
-
-                    {/* ACTUAL section — only when a session is logged or inline form is open */}
-                    {(hasDone||isInlineForm)&&(
-                      <div style={{ borderTop:"1px solid #f0f0ec",paddingTop:10 }}>
-                        <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8 }}>
-                          <div style={{ fontSize:10,fontWeight:700,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em" }}>Actual</div>
-                          {hasDone&&(
-                            <div style={{ display:"flex",alignItems:"center",gap:6 }}>
-                              {linked?.type&&(
-                                <span style={{ fontSize:11,fontWeight:700,color:SESSION_COLORS[linked.type]||"#888",background:`${SESSION_COLORS[linked.type]||"#888"}18`,padding:"2px 8px",borderRadius:20 }}>
-                                  {SESSION_LABELS[linked.type]||linked.type}
-                                </span>
-                              )}
-                              <span style={{ fontSize:11,fontWeight:700,color:"#0F6E56" }}>✓ Done</span>
-                            </div>
-                          )}
-                        </div>
-                        {isInlineForm ? (
-                          <div onClick={e=>e.stopPropagation()}>
-                            <LogForm
-                              initial={inlineFormDay.initial}
-                              onSave={d=>{ onSaveSession({ id:inlineFormDay.initial?.id||Date.now(), ...d, savedAt:new Date().toISOString() }); setInlineFormDay(null); }}
-                              onCancel={()=>setInlineFormDay(null)}
-                            />
+                    {/* PLAN section — run days only */}
+                    {!isRest&&(
+                      <div style={{ marginBottom:12 }}>
+                        <div style={{ fontSize:10,fontWeight:700,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5 }}>Plan</div>
+                        {dayGoal&&<div style={{ fontSize:12,color:"#888",marginBottom:5,fontStyle:"italic" }}>{dayGoal}</div>}
+                        {bullets.length>0 ? (
+                          <div style={{ display:"flex",flexDirection:"column",gap:4 }}>
+                            {bullets.map((b,j)=>(
+                              <div key={j} style={{ fontSize:13,color:"#333",display:"flex",gap:7,alignItems:"flex-start" }}>
+                                <span style={{ color,flexShrink:0,marginTop:1,lineHeight:1.5 }}>•</span>
+                                <span style={{ lineHeight:1.5 }}>{b}</span>
+                              </div>
+                            ))}
                           </div>
                         ) : (
-                          <div>
-                            <div style={{ display:"flex",gap:10,flexWrap:"wrap",fontSize:13,color:"#333",marginBottom:6 }}>
-                              {linked.distance&&<span style={{ fontWeight:700 }}>{linked.distance} km</span>}
-                              {linked.avgPace&&<span>{linked.avgPace}/km</span>}
-                              {linked.avgHR&&<span>HR {linked.avgHR}</span>}
-                              {linked.rpe&&<span>RPE {linked.rpe}/10</span>}
-                              {linked.te&&<span>TE {linked.te}</span>}
-                            </div>
-                            {linked.score&&(
-                              <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:8 }}>
-                                <span style={{ fontSize:15,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>
-                                {linked.score.verdict&&<span style={{ fontSize:12,color:"#666",fontStyle:"italic" }}>"{linked.score.verdict}"</span>}
-                              </div>
-                            )}
-                            {onSaveSession&&(
-                              <button onClick={e=>{ e.stopPropagation(); setInlineFormDay({day,initial:linked}); }}
-                                style={{ padding:"6px 14px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE833",fontSize:12,fontWeight:600,cursor:"pointer" }}>
-                                Edit
-                              </button>
-                            )}
-                          </div>
+                          <div style={{ fontSize:12,color:"#bbb",fontStyle:"italic" }}>No training details yet.</div>
                         )}
                       </div>
                     )}
 
-                    {/* Missed session — show Rest as actual */}
-                    {isMissed&&!isInlineForm&&(
+                    {/* Rest day label — only shown when no actuals logged */}
+                    {isRest&&linkedSessions.length===0&&(
+                      <div style={{ fontSize:12,color:"#ccc",marginBottom:2 }}>Rest day</div>
+                    )}
+
+                    {/* ACTUAL rows — one per logged session (supports multiple on same day) */}
+                    {linkedSessions.map((linked, idx) => {
+                      const isThisForm = inlineFormDay?.day === day && inlineFormDay?.sessionId === linked.id;
+                      return (
+                        <div key={linked.id||idx} style={{ borderTop:"1px solid #f0f0ec",paddingTop:10,marginBottom: idx < linkedSessions.length-1 ? 10 : 0 }}>
+                          <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8 }}>
+                            <div style={{ fontSize:10,fontWeight:700,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em" }}>Actual</div>
+                            <div style={{ display:"flex",alignItems:"center",gap:6 }}>
+                              {linked.type&&(
+                                <span style={{ fontSize:11,fontWeight:700,color:SESSION_COLORS[linked.type]||"#888",background:`${SESSION_COLORS[linked.type]||"#888"}18`,padding:"2px 8px",borderRadius:20 }}>
+                                  {SESSION_LABELS[linked.type]||linked.type}
+                                </span>
+                              )}
+                              {parseFloat(linked.distance||"")>0&&<span style={{ fontSize:11,fontWeight:700,color:"#0F6E56" }}>✓ Done</span>}
+                            </div>
+                          </div>
+                          {isThisForm ? (
+                            <div onClick={e=>e.stopPropagation()}>
+                              <LogForm
+                                initial={inlineFormDay.initial}
+                                onSave={d=>{ onSaveSession({ id:linked.id, ...d, savedAt:new Date().toISOString() }); setInlineFormDay(null); }}
+                                onCancel={()=>setInlineFormDay(null)}
+                              />
+                            </div>
+                          ) : (
+                            <div>
+                              <div style={{ display:"flex",gap:10,flexWrap:"wrap",fontSize:13,color:"#333",marginBottom:6 }}>
+                                {linked.distance&&<span style={{ fontWeight:700 }}>{linked.distance} km</span>}
+                                {linked.avgPace&&<span>{linked.avgPace}/km</span>}
+                                {linked.avgHR&&<span>HR {linked.avgHR}</span>}
+                                {linked.rpe&&<span>RPE {linked.rpe}/10</span>}
+                                {linked.te&&<span>TE {linked.te}</span>}
+                              </div>
+                              {linked.score&&(
+                                <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:8 }}>
+                                  <span style={{ fontSize:15,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>
+                                  {linked.score.verdict&&<span style={{ fontSize:12,color:"#666",fontStyle:"italic" }}>"{linked.score.verdict}"</span>}
+                                </div>
+                              )}
+                              {onSaveSession&&(
+                                <button onClick={e=>{ e.stopPropagation(); setInlineFormDay({day, initial:linked, sessionId:linked.id}); }}
+                                  style={{ padding:"6px 14px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE833",fontSize:12,fontWeight:600,cursor:"pointer" }}>
+                                  Edit
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* Missed session — show Rest as actual (only when no sessions logged) */}
+                    {isMissed&&!isNewSessionForm&&linkedSessions.length===0&&(
                       <div style={{ borderTop:"1px solid #f0f0ec",paddingTop:10,marginBottom:4 }}>
                         <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between" }}>
                           <div style={{ fontSize:10,fontWeight:700,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em" }}>Actual</div>
@@ -745,10 +754,21 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                       </div>
                     )}
 
-                    {/* Log button — shown below plan when nothing logged yet */}
-                    {!hasDone&&!isInlineForm&&isRun&&onSaveSession&&(
+                    {/* New session inline form */}
+                    {isNewSessionForm&&(
+                      <div style={{ borderTop:"1px solid #f0f0ec",paddingTop:10 }} onClick={e=>e.stopPropagation()}>
+                        <LogForm
+                          initial={inlineFormDay.initial}
+                          onSave={d=>{ onSaveSession({ id:Date.now(), ...d, savedAt:new Date().toISOString() }); setInlineFormDay(null); }}
+                          onCancel={()=>setInlineFormDay(null)}
+                        />
+                      </div>
+                    )}
+
+                    {/* Log button — run days with nothing logged yet */}
+                    {!hasDone&&!isNewSessionForm&&isRun&&onSaveSession&&(
                       <div style={{ marginTop:4 }}>
-                        <button onClick={e=>{ e.stopPropagation(); setInlineFormDay({day,initial:{type,date:dayDateStr}}); }}
+                        <button onClick={e=>{ e.stopPropagation(); setInlineFormDay({day, initial:{type, date:dayDateStr}, sessionId:null}); }}
                           style={{ padding:"7px 14px",borderRadius:8,background:"none",color:"#1B6FE8",border:"1px solid #1B6FE833",fontSize:13,fontWeight:600,cursor:"pointer" }}>
                           + Log this session
                         </button>
@@ -756,11 +776,6 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                     )}
 
                   </div>
-                )}
-
-                {/* Rest day */}
-                {isRest&&!scheduleEdit&&(
-                  <div style={{ padding:"0 14px 12px",fontSize:12,color:"#ccc" }}>Rest day</div>
                 )}
 
               </div>

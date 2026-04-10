@@ -3,7 +3,7 @@ import {
   parsePace, secsTopace,
   computeRacePace, computeGoalTime,
   getWeekStart, getPlannedDay, getAutoLink, getWeeksToRace,
-  findLinkedSession, sessionInWeek, sessionsForWeek,
+  findLinkedSession, findLinkedSessions, sessionInWeek, sessionsForWeek,
   weekRunSessions, countRunsPlanned,
   computeAutoScore, bulkDeleteSessions,
   isDayAfterRace, isDayRaceDay, isWeekInPast,
@@ -349,6 +349,54 @@ describe("isWeekInPast", () => {
   it("current week is not 'in the past'", () => {
     const current = getWeekStart(new Date().toISOString().split("T")[0]);
     expect(isWeekInPast(current)).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// findLinkedSessions — multiple sessions per day
+// ─────────────────────────────────────────────────────────────────────────────
+describe("findLinkedSessions", () => {
+  const weekStart = "2026-04-06";
+
+  it("returns all sessions matching by date", () => {
+    const s1 = { id:1, date:"2026-04-07" };
+    const s2 = { id:2, date:"2026-04-07" };
+    const s3 = { id:3, date:"2026-04-08" };
+    expect(findLinkedSessions([s1,s2,s3], "2026-04-07", "Tue", weekStart)).toEqual([s1,s2]);
+  });
+
+  it("returns a single date match as array of one", () => {
+    const s = { id:1, date:"2026-04-07" };
+    expect(findLinkedSessions([s], "2026-04-07", "Tue", weekStart)).toEqual([s]);
+  });
+
+  it("falls back to plan-link when no date match", () => {
+    const s = { id:1, date:"2026-03-01", plannedDay:"Tue", plannedWeekStart:weekStart };
+    expect(findLinkedSessions([s], "2026-04-07", "Tue", weekStart)).toEqual([s]);
+  });
+
+  it("date matches take full priority — plan-link ignored when date match exists", () => {
+    const byDate = { id:1, date:"2026-04-07" };
+    const byLink = { id:2, date:"2026-03-01", plannedDay:"Tue", plannedWeekStart:weekStart };
+    const result = findLinkedSessions([byDate, byLink], "2026-04-07", "Tue", weekStart);
+    expect(result).toContain(byDate);
+    expect(result).not.toContain(byLink);
+  });
+
+  it("returns [] when no match at all", () =>
+    expect(findLinkedSessions([{ id:1, date:"2026-04-08" }], "2026-04-07", "Tue", weekStart)).toEqual([]));
+
+  it("returns [] for empty sessions", () =>
+    expect(findLinkedSessions([], "2026-04-07", "Tue", weekStart)).toEqual([]));
+
+  it("returns [] for null sessions", () =>
+    expect(findLinkedSessions(null, "2026-04-07", "Tue", weekStart)).toEqual([]));
+
+  it("two rest-day runs (no plan link) are both returned by date", () => {
+    // Regression: rest days with logged runs were hidden entirely
+    const run1 = { id:1, date:"2026-04-06", type:"run_easy", distance:"5.0" }; // Mon (rest day)
+    const run2 = { id:2, date:"2026-04-06", type:"run_threshold", distance:"8.0" };
+    expect(findLinkedSessions([run1,run2], "2026-04-06", "Mon", weekStart)).toHaveLength(2);
   });
 });
 

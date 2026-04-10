@@ -132,6 +132,18 @@ export function findLinkedSession(sessions, dayDateStr, day, weekPlanWeekStart) 
 }
 
 /**
+ * Returns ALL sessions for a given plan day — supports multiple sessions on the same date.
+ * Date match takes priority; if any session matches by date, all date-matches are returned.
+ * Falls back to plan-link matches (plannedDay + plannedWeekStart) when no date match exists.
+ */
+export function findLinkedSessions(sessions, dayDateStr, day, weekPlanWeekStart) {
+  if (!sessions?.length) return [];
+  const byDate = sessions.filter(s => s.date === dayDateStr);
+  if (byDate.length > 0) return byDate;
+  return sessions.filter(s => s.plannedDay === day && s.plannedWeekStart === weekPlanWeekStart);
+}
+
+/**
  * Returns true if a session's date falls within the given week (Mon–Sun).
  * Used by WeekStrip dots and the week summary bar.
  */
