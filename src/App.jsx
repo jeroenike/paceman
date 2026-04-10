@@ -1,4 +1,12 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import {
+  DAY_LABELS, SESSION_TYPES, SESSION_COLORS, SESSION_LABELS, RACE_DISTANCES,
+  parsePace, secsTopace, computeRacePace, computeGoalTime,
+  getWeekStart, getCurrentWeekStart, getPlannedDay, getAutoLink,
+  getWeeksToRace, findLinkedSession, sessionsForWeek,
+  computeAutoScore, bulkDeleteSessions as utilBulkDelete,
+  isDayAfterRace, isDayRaceDay, isWeekInPast,
+} from "./utils.js";
 
 const STORAGE_KEY = "paceman_v4";
 const RACE_GOALS = ["5km","10km","15km","Half Marathon","Marathon","Trail Run","Custom..."];
@@ -8,84 +16,9 @@ const defaultProfile = {
   longRunPace:"", easyHR:"", experience:"", injuries:[],
   schedule:{ Mon:"rest", Tue:"run_threshold", Wed:"crossfit", Thu:"run_easy", Fri:"crossfit", Sat:"crossfit", Sun:"run_long" },
 };
-const DAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-const SESSION_TYPES = ["rest","run_threshold","run_easy","run_long","crossfit","run_interval"];
-const SESSION_COLORS = { rest:"#888780", run_threshold:"#1B6FE8", run_easy:"#0F6E56", run_long:"#3B6D11", crossfit:"#993C1D", run_interval:"#7C3AED" };
-const SESSION_LABELS = { rest:"Rest", run_threshold:"Threshold", run_easy:"Easy Run", run_long:"Long Run", crossfit:"CrossFit", run_interval:"Intervals" };
 
 function loadStore() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; } }
 function saveStore(d) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} }
-
-function parsePace(str) {
-  if (!str) return null;
-  const [m,s] = str.split(":").map(Number);
-  if (isNaN(m)||isNaN(s)) return null;
-  return m*60+s;
-}
-function secsTopace(secs) {
-  if (!secs) return null;
-  const m = Math.floor(secs/60), s = Math.round(secs%60);
-  return `${m}:${String(s).padStart(2,"0")}`;
-}
-const RACE_DISTANCES = { "5km":5, "10km":10, "15km":15, "Half Marathon":21.0975, "Marathon":42.195 };
-function computeRacePace(goal, goalTime) {
-  const dist = RACE_DISTANCES[goal];
-  if (!dist || !goalTime) return null;
-  const parts = goalTime.split(":").map(Number);
-  let secs;
-  if (parts.length===3) secs = parts[0]*3600+parts[1]*60+(parts[2]||0);
-  else if (parts.length===2) secs = parts[0]*60+(parts[1]||0);
-  else return null;
-  if (!secs) return null;
-  return secsTopace(Math.round(secs/dist));
-}
-function computeGoalTime(goal, racePace) {
-  const dist = RACE_DISTANCES[goal];
-  const paceSecs = parsePace(racePace);
-  if (!dist || !paceSecs) return null;
-  const t = Math.round(paceSecs * dist);
-  const h = Math.floor(t/3600), m = Math.floor((t%3600)/60), s = t%60;
-  return `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
-}
-function getWeekStart(date) {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day===0?-6:1);
-  d.setDate(diff);
-  // Use local date parts to avoid UTC offset shifting the date
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-}
-function getCurrentWeekStart() { return getWeekStart(new Date()); }
-function getPlannedDay(sessionDate, weekPlan) {
-  if (!weekPlan?.weekStart || !sessionDate) return null;
-  if (getWeekStart(sessionDate) !== weekPlan.weekStart) return null;
-  const d = new Date(sessionDate + "T00:00:00");
-  return DAY_LABELS[d.getDay() === 0 ? 6 : d.getDay() - 1];
-}
-function getAutoLink(sessionDate, weekPlans) {
-  if (!sessionDate || !weekPlans?.length) return null;
-  const sessionWeekStart = getWeekStart(sessionDate);
-  const plan = weekPlans.find(p => p.weekStart === sessionWeekStart);
-  if (!plan) return null;
-  const d = new Date(sessionDate + "T00:00:00");
-  return { plannedDay: DAY_LABELS[d.getDay() === 0 ? 6 : d.getDay() - 1], plannedWeekStart: sessionWeekStart };
-}
-function computeAutoScore(session, weekPlan) {
-  let paceScore = null;
-  const tSecs = parsePace(weekPlan?.weekGoals?.targetPace);
-  const aSecs = parsePace(session.avgPace);
-  if (tSecs && aSecs) {
-    const delta = aSecs - tSecs;
-    paceScore = delta <= -30 ? 7 : delta <= -10 ? 9 : delta <= 10 ? 10 : delta <= 30 ? 8 : delta <= 60 ? 6 : delta <= 120 ? 4 : 2;
-  }
-  let rpeScore = null;
-  const rpe = Number(session.rpe);
-  if (rpe) { const m = {1:3,2:4,3:5,4:5,5:6,6:8,7:9,8:7,9:5,10:3}; rpeScore = m[rpe] ?? null; }
-  if (paceScore !== null && rpeScore !== null) return { value: Math.round((paceScore+rpeScore)/2), verdict:"Auto: pace + RPE" };
-  if (paceScore !== null) return { value: paceScore, verdict:"Auto: pace" };
-  if (rpeScore !== null) return { value: rpeScore, verdict:"Auto: RPE" };
-  return null;
-}
 
 async function callClaude(system, user) {
   const res = await fetch("/api/claude", {
@@ -538,7 +471,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
 
       {/* Week summary bar + edit schedule toggle */}
       {(()=>{
-        const weekSessions = (store.sessions||[]).filter(s => (s.plannedWeekStart===activeWeekStart || getWeekStart(s.date)===activeWeekStart) && parseFloat(s.distance||"") > 0);
+        const weekSessions = sessionsForWeek(store.sessions, activeWeekStart).filter(s => parseFloat(s.distance||"") > 0);
         const actualKm = weekSessions.reduce((sum,s) => sum + (parseFloat(s.distance)||0), 0);
         const plannedKm = weekGoals?.totalDistance || 0;
         const pct = plannedKm > 0 ? Math.min(100, Math.round((actualKm/plannedKm)*100)) : 0;
@@ -661,8 +594,7 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
         const isRest = type === "rest";
         const isToday = dayDateStr === todayStr;
         const isPast = dayDateStr < todayStr;
-        const linked = sessions?.find(s => s.date === dayDateStr)
-          ?? sessions?.find(s => s.plannedDay === day && s.plannedWeekStart === weekPlan?.weekStart);
+        const linked = findLinkedSession(sessions, dayDateStr, day, weekPlan?.weekStart);
         const hasDone = !!linked && !!parseFloat(linked.distance||"");
         const isMissed = isPast && !isRest && !hasDone;
         const isPickerOpen = scheduleEdit && pickerDay === day;
@@ -1686,8 +1618,7 @@ export default function App() {
   }
 
   function bulkDeleteSessions(ids) {
-    const idSet = new Set(ids);
-    persist({ sessions:(store.sessions||[]).filter(s=>!idSet.has(s.id)) });
+    persist({ sessions: utilBulkDelete(store.sessions, ids) });
   }
 
   function bulkSaveSessions(newSessions) {
@@ -1835,16 +1766,7 @@ Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.
     if (!raceDate) { setError("Set a race date in your profile first."); return; }
     setLoading(true); setError(""); setLoadingMsg("");
     try {
-      // Build list of weeks: current → race week
-      const currentWS = getCurrentWeekStart();
-      const raceWS = getWeekStart(new Date(raceDate+"T00:00:00"));
-      const weeks = [];
-      let ws = currentWS;
-      while (ws <= raceWS) {
-        weeks.push(ws);
-        const nd = new Date(ws+"T00:00:00"); nd.setDate(nd.getDate()+7);
-        ws = `${nd.getFullYear()}-${String(nd.getMonth()+1).padStart(2,"0")}-${String(nd.getDate()).padStart(2,"0")}`;
-      }
+      const weeks = getWeeksToRace(getCurrentWeekStart(), raceDate);
       const totalWeeks = weeks.length;
       let allPlans = [...(store.weekPlans||[])];
 
