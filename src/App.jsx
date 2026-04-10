@@ -278,6 +278,7 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
         const isActive = ws===activeWeekStart;
         const label = new Date(ws+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"});
         // One dot per planned run day; filled = session found by date (or fallback link)
+        // When no plan exists, fall back to one filled dot per logged run session in this week
         const wsDate = new Date(ws+"T00:00:00");
         const plannedDays = plan
           ? DAY_LABELS.filter(d=>{ const t=plan.weekGoals?.daySessions?.[d]?.type; return t&&t.startsWith("run"); })
@@ -290,6 +291,9 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
                 );
                 return { day:d, type:plan.weekGoals.daySessions[d].type, linked };
               })
+          : [];
+        const unplannedRuns = !plan
+          ? (sessions||[]).filter(s => sessionInWeek(s, ws) && s.type?.startsWith("run") && parseFloat(s.distance||"") > 0)
           : [];
         const isCurrentWeek = ws===getCurrentWeekStart();
         const isRaceWeek = raceWeekStart && ws===raceWeekStart;
@@ -309,7 +313,12 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
                     const c=SESSION_COLORS[type]||"#888780";
                     return <div key={day} style={{ width:6,height:6,borderRadius:"50%",background:linked?c:"transparent",border:`1.5px solid ${c}` }}/>;
                   })
-                : <div style={{ width:6,height:6,borderRadius:"50%",background:"transparent",border:"1.5px solid #ddd" }}/>
+                : unplannedRuns.length>0
+                  ? unplannedRuns.map((s,i)=>{
+                      const c=SESSION_COLORS[s.type]||"#0F6E56";
+                      return <div key={i} style={{ width:6,height:6,borderRadius:"50%",background:c,border:`1.5px solid ${c}` }}/>;
+                    })
+                  : <div style={{ width:6,height:6,borderRadius:"50%",background:"transparent",border:"1.5px solid #ddd" }}/>
               }
             </div>
           </button>
