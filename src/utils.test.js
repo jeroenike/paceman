@@ -8,6 +8,7 @@ import {
   computeAutoScore, bulkDeleteSessions,
   isDayAfterRace, isDayRaceDay, isWeekInPast,
   DAY_LABELS, SESSION_LABELS, SESSION_COLORS,
+  secsToTime, parseDistanceFromMainSet, computePlanDeltas, computeRaceProjection,
 } from "./utils.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -421,6 +422,177 @@ describe("sessionInWeek — date-only matching", () => {
 
   it("returns false for missing date", () =>
     expect(sessionInWeek({ plannedWeekStart: weekStart }, weekStart)).toBe(false));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// secsToTime
+// ─────────────────────────────────────────────────────────────────────────────
+describe("secsToTime", () => {
+  it("formats sub-hour as M:SS", () => expect(secsToTime(330)).toBe("5:30"));
+  it("formats over-1-hour as H:MM:SS", () => expect(secsToTime(6300)).toBe("1:45:00"));
+  it("pads minutes and seconds", () => expect(secsToTime(3661)).toBe("1:01:01"));
+  it("returns null for 0", () => expect(secsToTime(0)).toBeNull());
+  it("returns null for null", () => expect(secsToTime(null)).toBeNull());
+  it("returns null for negative", () => expect(secsToTime(-60)).toBeNull());
+  it("formats half-marathon goal 1:45:00 = 6300s", () => expect(secsToTime(6300)).toBe("1:45:00"));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// parseDistanceFromMainSet
+// ─────────────────────────────────────────────────────────────────────────────
+describe("parseDistanceFromMainSet", () => {
+  it("extracts leading integer km", () => expect(parseDistanceFromMainSet("12km at 5:15/km pace")).toBe(12));
+  it("extracts leading decimal km", () => expect(parseDistanceFromMainSet("14.5km easy run")).toBe(14.5));
+  it("extracts distance before qualifier (secondary pattern)", () =>
+    expect(parseDistanceFromMainSet("Easy 10km at HR 135")).toBe(10));
+  it("returns null for interval notation (no leading distance)", () =>
+    expect(parseDistanceFromMainSet("4x1km at threshold pace")).toBeNull());
+  it("returns null for null input", () => expect(parseDistanceFromMainSet(null)).toBeNull());
+  it("returns null for empty string", () => expect(parseDistanceFromMainSet("")).toBeNull());
+  it("extracts km with space before unit", () =>
+    expect(parseDistanceFromMainSet("10 km at 5:30")).toBe(10));
+  it("returns null when mainSet starts with reps (e.g. 6x800m)", () =>
+    expect(parseDistanceFromMainSet("6x800m @ 3:40 with 90s rest")).toBeNull());
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// computePlanDeltas
+// ─────────────────────────────────────────────────────────────────────────────
+describe("computePlanDeltas", () => {
+  const weekPlan = { weekGoals: { targetPace: "5:15" } };
+
+  it("returns distDelta and paceDeltaSecs for a complete session", () => {
+    const session = { distance: "14.36", avgPace: "5:34" };
+    const result = computePlanDeltas(session, weekPlan, "12km at 5:15/km pace");
+    expect(result.distDelta).toBe(2.36);
+    expect(result.paceDeltaSecs).toBe(19); // 5:34 - 5:15 = 19s slower
+    expect(result.plannedDist).toBe(12);
+    expect(result.targetPace).toBe("5:15");
+  });
+
+  it("returns null distDelta when mainSet has no parseable distance", () => {
+    const session = { distance: "14.36", avgPace: "5:34" };
+    const result = computePlanDeltas(session, weekPlan, "4x1km intervals");
+    expect(result.distDelta).toBeNull();
+    expect(result.paceDeltaSecs).toBe(19); // pace delta still computed
+  });
+
+  it("returns null paceDeltaSecs when weekPlan has no targetPace", () => {
+    const session = { distance: "14.36", avgPace: "5:34" };
+    const result = computePlanDeltas(session, { weekGoals: {} }, "12km at 5:15");
+    expect(result.distDelta).toBe(2.36);
+    expect(result.paceDeltaSecs).toBeNull();
+  });
+
+  it("returns both null when weekPlan is null", () => {
+    const session = { distance: "14.36", avgPace: "5:34" };
+    const result = computePlanDeltas(session, null, "12km at 5:15");
+    expect(result.paceDeltaSecs).toBeNull();
+    expect(result.targetPace).toBeNull();
+  });
+
+  it("returns negative paceDeltaSecs when session is faster than target", () => {
+    const session = { distance: "10", avgPace: "5:00" };
+    const result = computePlanDeltas(session, weekPlan, "10km at 5:15");
+    expect(result.paceDeltaSecs).toBe(-15); // 5:00 - 5:15 = -15s (faster)
+    expect(result.distDelta).toBe(0);
+  });
+
+  it("returns null distDelta when session has no distance", () => {
+    const session = { avgPace: "5:34" };
+    const result = computePlanDeltas(session, weekPlan, "12km at 5:15");
+    expect(result.distDelta).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// computeRaceProjection
+// ─────────────────────────────────────────────────────────────────────────────
+describe("computeRaceProjection", () => {
+  const profile = { goal: "Half Marathon", racePace: "5:15" };
+
+  function makeRuns(paces) {
+    return paces.map((p, i) => ({
+      id: i + 1,
+      type: "run_easy",
+      avgPace: p,
+      date: `2026-04-${String(i + 1).padStart(2, "0")}`,
+    }));
+  }
+
+  it("returns null with fewer than 2 sessions", () => {
+    expect(computeRaceProjection(makeRuns(["5:15"]), profile)).toBeNull();
+  });
+
+  it("returns null when profile has no racePace", () => {
+    expect(computeRaceProjection(makeRuns(["5:15", "5:20"]), { goal: "Half Marathon" })).toBeNull();
+  });
+
+  it("returns null when profile has unknown goal", () => {
+    expect(computeRaceProjection(makeRuns(["5:15", "5:20"]), { goal: "Ultramarathon", racePace: "5:15" })).toBeNull();
+  });
+
+  it("returns null for empty sessions", () => {
+    expect(computeRaceProjection([], profile)).toBeNull();
+  });
+
+  it("returns a result with the correct shape", () => {
+    const runs = makeRuns(["5:15", "5:20", "5:10"]);
+    const result = computeRaceProjection(runs, profile);
+    expect(result).not.toBeNull();
+    expect(result).toHaveProperty("projTime");
+    expect(result).toHaveProperty("goalTime");
+    expect(result).toHaveProperty("gapSecs");
+    expect(result).toHaveProperty("pct");
+    expect(result).toHaveProperty("sampleSize");
+    expect(result.sampleSize).toBe(3);
+  });
+
+  it("gapSecs is 0 when all runs are exactly at race pace", () => {
+    const runs = makeRuns(["5:15", "5:15", "5:15"]);
+    const result = computeRaceProjection(runs, profile);
+    expect(result.gapSecs).toBe(0);
+    expect(result.pct).toBe(100);
+  });
+
+  it("gapSecs is positive (slower) when runs are slower than race pace", () => {
+    const runs = makeRuns(["5:34", "5:34", "5:34"]);
+    const result = computeRaceProjection(runs, profile);
+    expect(result.gapSecs).toBeGreaterThan(0);
+    expect(result.pct).toBeLessThan(100);
+  });
+
+  it("gapSecs is negative (faster) when runs are faster than race pace", () => {
+    const runs = makeRuns(["5:00", "5:00", "5:00"]);
+    const result = computeRaceProjection(runs, profile);
+    expect(result.gapSecs).toBeLessThan(0);
+    expect(result.pct).toBe(100); // capped at 100
+  });
+
+  it("weights more recent runs more heavily (recency matters)", () => {
+    // Most recent run is very fast (5:00), older runs are slow (6:00)
+    // Dates must be ordered: later dates = more recent
+    const runs = [
+      { id:1, type:"run_easy", avgPace:"5:00", date:"2026-04-10" }, // most recent
+      { id:2, type:"run_easy", avgPace:"6:00", date:"2026-04-03" },
+      { id:3, type:"run_easy", avgPace:"6:00", date:"2026-03-27" },
+    ];
+    const result = computeRaceProjection(runs, profile);
+    // Weighted avg should be closer to 5:00 than simple avg of 5:40
+    expect(result.projPace).not.toBeNull();
+    const projSecs = (parseInt(result.projPace.split(":")[0]) * 60 + parseInt(result.projPace.split(":")[1]));
+    expect(projSecs).toBeLessThan(340); // less than 5:40 (simple average)
+  });
+
+  it("only includes run-type sessions (ignores crossfit)", () => {
+    const sessions = [
+      { id:1, type:"run_easy", avgPace:"5:15", date:"2026-04-10" },
+      { id:2, type:"crossfit", avgPace:"5:00", date:"2026-04-09" },
+      { id:3, type:"run_long", avgPace:"5:15", date:"2026-04-08" },
+    ];
+    const result = computeRaceProjection(sessions, profile);
+    expect(result.sampleSize).toBe(2); // only the two run sessions
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

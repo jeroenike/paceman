@@ -7,6 +7,7 @@ import {
   weekRunSessions, countRunsPlanned,
   computeAutoScore, bulkDeleteSessions as utilBulkDelete,
   isDayAfterRace, isDayRaceDay, isWeekInPast,
+  secsToTime, computePlanDeltas, computeRaceProjection,
 } from "./utils.js";
 
 const STORAGE_KEY = "paceman_v4";
@@ -427,6 +428,42 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
             {daysToRace===0&&<span style={{ fontSize:11,padding:"2px 8px",borderRadius:6,background:"#fff8e0",color:"#b07000",fontWeight:700 }}>Race day!</span>}
           </div>
         )}
+
+        {/* Race projection gauge */}
+        {(()=>{
+          const proj = computeRaceProjection(store.sessions, store.profile);
+          if (!proj) return null;
+          const barColor = proj.gapSecs <= 0 ? "#0F6E56" : proj.gapSecs < proj.goalTimeSecs * 0.10 ? "#b07000" : "#c00";
+          const gapLabel = proj.gapSecs === 0 ? "On target ✓"
+            : proj.gapSecs > 0 ? `${secsToTime(Math.abs(proj.gapSecs))} behind goal`
+            : `${secsToTime(Math.abs(proj.gapSecs))} ahead of goal`;
+          return (
+            <div style={{ marginTop:10,padding:"10px 12px",borderRadius:10,
+              background:proj.gapSecs<=0?"#f4fbf7":proj.gapSecs<proj.goalTimeSecs*0.05?"#fffbf0":"#fff8f8",
+              border:`1px solid ${barColor}33` }}>
+              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6 }}>
+                <span style={{ fontSize:11,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em" }}>
+                  Race projection · {proj.sampleSize} run{proj.sampleSize!==1?"s":""}
+                </span>
+                <span style={{ fontSize:11,fontWeight:700,color:barColor }}>{gapLabel}</span>
+              </div>
+              <div style={{ display:"flex",gap:16,alignItems:"flex-end",marginBottom:8 }}>
+                <div>
+                  <div style={{ fontSize:10,color:"#aaa",marginBottom:1 }}>Projected</div>
+                  <div style={{ fontSize:20,fontWeight:800,color:barColor,lineHeight:1 }}>{proj.projTime}</div>
+                </div>
+                <div style={{ fontSize:14,color:"#ccc",paddingBottom:2 }}>vs</div>
+                <div>
+                  <div style={{ fontSize:10,color:"#aaa",marginBottom:1 }}>Goal</div>
+                  <div style={{ fontSize:20,fontWeight:800,color:"#1a1a1a",lineHeight:1 }}>{proj.goalTime}</div>
+                </div>
+              </div>
+              <div style={{ height:5,borderRadius:4,background:"#f0f0ec",overflow:"hidden" }}>
+                <div style={{ height:"100%",borderRadius:4,background:barColor,width:`${proj.pct}%`,transition:"width 0.4s" }}/>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Week strip */}
@@ -721,6 +758,24 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                                 {linked.rpe&&<span>RPE {linked.rpe}/10</span>}
                                 {linked.te&&<span>TE {linked.te}</span>}
                               </div>
+                              {(()=>{
+                                const deltas = computePlanDeltas(linked, weekPlan, mainSet);
+                                if (deltas.distDelta === null && deltas.paceDeltaSecs === null) return null;
+                                return (
+                                  <div style={{ display:"flex",gap:8,flexWrap:"wrap",fontSize:11,marginBottom:6 }}>
+                                    {deltas.distDelta !== null && (
+                                      <span style={{ color:Math.abs(deltas.distDelta)<=1?"#0F6E56":deltas.distDelta>0?"#b07000":"#888" }}>
+                                        {deltas.distDelta>0?"+":""}{deltas.distDelta}km vs plan
+                                      </span>
+                                    )}
+                                    {deltas.paceDeltaSecs !== null && (
+                                      <span style={{ color:Math.abs(deltas.paceDeltaSecs)<=15?"#0F6E56":deltas.paceDeltaSecs>0?"#c00":"#b07000" }}>
+                                        {deltas.paceDeltaSecs>0?"+":""}{secsTopace(Math.abs(deltas.paceDeltaSecs))}/km vs target
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                               {linked.score&&(
                                 <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:8 }}>
                                   <span style={{ fontSize:15,fontWeight:800,color:linked.score.value>=8?"#0F6E56":linked.score.value>=6?"#b07000":"#c00" }}>{linked.score.value}/10</span>
@@ -1686,7 +1741,16 @@ export default function App() {
         const plan = (store.weekPlans||[]).find(p=>p.weekStart===d.plannedWeekStart);
         const planned = plan?.weekGoals?.daySessions?.[d.plannedDay];
         if (!planned) return "";
-        return `\nPlanned for ${d.plannedDay}: type=${planned.type}, mainSet="${planned.mainSet||"none"}", targetPace=${plan.weekGoals.targetPace||"n/a"}`;
+        const deltas = computePlanDeltas(d, plan, planned.mainSet);
+        const deltaParts = [
+          deltas.paceDeltaSecs !== null
+            ? `pace ${deltas.paceDeltaSecs>0?"+":""}${secsTopace(Math.abs(deltas.paceDeltaSecs))}/km (${deltas.paceDeltaSecs>0?"slower":"faster"} than target ${deltas.targetPace})`
+            : null,
+          deltas.distDelta !== null
+            ? `distance ${deltas.distDelta>0?"+":""}${deltas.distDelta}km vs planned ${deltas.plannedDist}km`
+            : null,
+        ].filter(Boolean).join(", ");
+        return `\nPlanned for ${d.plannedDay}: type=${planned.type}, mainSet="${planned.mainSet||"none"}", targetPace=${plan.weekGoals.targetPace||"n/a"}${deltaParts?`\nDeltas: ${deltaParts}`:""}`;
       })();
       const r = await callClaude(SYSTEM,
         `Analyze session — ${goalLabel} in ${p.goalTime} (threshold: ${p.thresholdPace}/km):
