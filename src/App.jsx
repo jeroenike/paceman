@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
   DAY_LABELS, SESSION_TYPES, SESSION_COLORS, SESSION_LABELS, RACE_DISTANCES,
   parsePace, secsTopace, computeRacePace, computeGoalTime,
@@ -9,6 +9,7 @@ import {
   isDayAfterRace, isDayRaceDay, isWeekInPast,
   secsToTime, computePlanDeltas, computeRaceProjection,
 } from "./utils.js";
+import { DEV_SEED } from "./dev-seed.js";
 
 const STORAGE_KEY = "paceman_v4";
 const RACE_GOALS = ["5km","10km","15km","Half Marathon","Marathon","Trail Run","Custom..."];
@@ -1462,7 +1463,7 @@ function ProgressScreen({ store }) {
 
 // ── Profile Screen ──
 
-function ProfileScreen({ store, persist, onSaved }) {
+function ProfileScreen({ store, persist, onSaved, isDevMode }) {
   const [draft, setDraft] = useState(()=>({...defaultProfile,...store.profile}));
   const set = (k,v) => setDraft(prev=>({...prev,[k]:v}));
   const setSchedule = (day,val) => setDraft(prev=>({...prev,schedule:{...prev.schedule,[day]:val}}));
@@ -1615,6 +1616,25 @@ function ProfileScreen({ store, persist, onSaved }) {
             Clear history
           </button>
         )}
+        {isDevMode&&(
+          <div style={{ marginTop:24,borderTop:"1px dashed #e0e0e0",paddingTop:20 }}>
+            <div style={{ fontSize:11,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10 }}>
+              Dev tools · ?dev mode
+            </div>
+            <button onClick={()=>{
+              if(window.confirm("Load sample data? This will overwrite your current profile, sessions and plans.")) {
+                persist(DEV_SEED);
+                onSaved();
+              }
+            }}
+              style={{ width:"100%",padding:12,borderRadius:10,background:"#f5f5f5",color:"#555",border:"1px solid #ddd",fontSize:14,fontWeight:600,cursor:"pointer" }}>
+              Load sample data
+            </button>
+            <div style={{ fontSize:11,color:"#bbb",marginTop:6,lineHeight:1.5 }}>
+              Loads 8 realistic training sessions + 3 week plans to test the race projection gauge and plan comparison features.
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1667,6 +1687,7 @@ export default function App() {
 
   const hasProfile = store.profile?.name && store.profile?.goal;
   const today = DAY_LABELS[new Date().getDay()===0?6:new Date().getDay()-1];
+  const isDevMode = useMemo(()=>new URLSearchParams(window.location.search).has("dev"), []);
 
   async function run(fn) {
     setLoading(true); setError("");
@@ -2015,7 +2036,7 @@ Include: exact paces, HR zones (bpm), cadence targets, rep structure, rest.`);
         {screen==="session"&&<SessionScreen store={store} activeDay={activeDay} loading={loading} error={error} aiText={aiText} onBack={()=>{ setScreen("home"); setAiText(""); setActiveDay(null); }}/>}
         {screen==="log"&&<LogScreen store={store} loading={loading} error={error} aiText={aiText} stravaLoading={stravaLoading} stravaActivities={stravaActivities} onImportStrava={importFromStrava} onSaveSession={saveSession} onBulkSave={bulkSaveSessions} onBulkDelete={bulkDeleteSessions} onAnalyze={analyzeSession} editingSession={editingSession} setEditingSession={setEditingSession}/>}
         {screen==="progress"&&<ProgressScreen store={store}/>}
-        {screen==="profile"&&<ProfileScreen store={store} persist={persist} onSaved={()=>setScreen("home")}/>}
+        {screen==="profile"&&<ProfileScreen store={store} persist={persist} onSaved={()=>setScreen("home")} isDevMode={isDevMode}/>}
       </div>
       <NavBar screen={screen} onNav={handleNav}/>
     </div>
