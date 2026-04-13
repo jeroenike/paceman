@@ -1687,7 +1687,7 @@ export default function App() {
 
   const hasProfile = store.profile?.name && store.profile?.goal;
   const today = DAY_LABELS[new Date().getDay()===0?6:new Date().getDay()-1];
-  const isDevMode = useMemo(()=>{ const p = new URLSearchParams(window.location.search); return p.has("dev") || p.has("DEV"); }, []);
+  const isDevMode = import.meta.env.DEV || new URLSearchParams(window.location.search).has("dev") || new URLSearchParams(window.location.search).has("DEV");
 
   async function run(fn) {
     setLoading(true); setError("");
