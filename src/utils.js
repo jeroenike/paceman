@@ -275,15 +275,27 @@ export function parseDistanceFromMainSet(mainSet) {
 
 /**
  * Compute signed deltas between a logged session and its week plan.
- * Returns { distDelta, plannedDist, paceDeltaSecs, targetPace } — values are null when data is absent.
+ * Target pace is session-type-aware:
+ *   - run_threshold / run_interval → weekPlan.weekGoals.targetPace
+ *   - run_long                     → longRunPace from profile
+ *   - run_easy                     → no pace comparison (paceDeltaSecs = null)
+ * Returns { distDelta, plannedDist, paceDeltaSecs, targetPace }.
  */
-export function computePlanDeltas(session, weekPlan, mainSet) {
+export function computePlanDeltas(session, weekPlan, mainSet, sessionType, longRunPace) {
   const actualDist = parseFloat(session?.distance || "");
   const plannedDist = parseDistanceFromMainSet(mainSet);
   const distDelta = (!isNaN(actualDist) && actualDist > 0 && plannedDist !== null)
     ? parseFloat((actualDist - plannedDist).toFixed(2)) : null;
 
-  const targetPace = weekPlan?.weekGoals?.targetPace || null;
+  const type = sessionType || session?.type;
+  let targetPace = null;
+  if (type === "run_threshold" || type === "run_interval") {
+    targetPace = weekPlan?.weekGoals?.targetPace || null;
+  } else if (type === "run_long") {
+    targetPace = longRunPace || null;
+  }
+  // run_easy: targetPace stays null — no meaningful pace target
+
   const actualPaceSecs = parsePace(session?.avgPace);
   const targetPaceSecs = parsePace(targetPace);
   const paceDeltaSecs = (actualPaceSecs !== null && targetPaceSecs !== null)
@@ -294,7 +306,9 @@ export function computePlanDeltas(session, weekPlan, mainSet) {
 
 /**
  * Compute projected race finish time from recent logged runs.
- * Uses exponential recency weighting (weight = 0.85^i) across last 8 runs.
+ * Prefers threshold + interval sessions (best race pace predictors).
+ * Falls back to all run sessions if fewer than 2 quality sessions exist.
+ * Uses exponential recency weighting (weight = 0.85^i) across last 8 sessions.
  * Requires at least 2 sessions and a valid race goal + race pace in profile.
  */
 export function computeRaceProjection(sessions, profile) {
@@ -302,10 +316,15 @@ export function computeRaceProjection(sessions, profile) {
   const goalPaceSecs = parsePace(profile?.racePace);
   if (!raceDist || !goalPaceSecs) return null;
 
-  const runs = (sessions || [])
+  const allRuns = (sessions || [])
     .filter(s => s.type?.startsWith("run") && parsePace(s.avgPace) !== null)
-    .sort((a, b) => new Date(b.date) - new Date(a.date))
-    .slice(0, 8);
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  // Quality sessions (threshold + intervals) predict race pace far better than
+  // easy/long runs, which are deliberately run 40–90s/km slower than race effort.
+  const qualityRuns = allRuns.filter(s => s.type === "run_threshold" || s.type === "run_interval");
+  const usingQualitySessions = qualityRuns.length >= 2;
+  const runs = usingQualitySessions ? qualityRuns.slice(0, 8) : allRuns.slice(0, 8);
 
   if (runs.length < 2) return null;
 
@@ -327,6 +346,7 @@ export function computeRaceProjection(sessions, profile) {
     gapSecs,
     goalTimeSecs,
     sampleSize: runs.length,
+    usingQualitySessions,
     // % of goal achieved — how close projected is to goal (100% = exactly on goal, <100% = behind)
     pct: Math.min(100, Math.round((goalTimeSecs / projTimeSecs) * 100)),
   };

@@ -461,8 +461,8 @@ describe("parseDistanceFromMainSet", () => {
 describe("computePlanDeltas", () => {
   const weekPlan = { weekGoals: { targetPace: "5:15" } };
 
-  it("returns distDelta and paceDeltaSecs for a complete session", () => {
-    const session = { distance: "14.36", avgPace: "5:34" };
+  it("returns distDelta and paceDeltaSecs for a threshold session", () => {
+    const session = { distance: "14.36", avgPace: "5:34", type: "run_threshold" };
     const result = computePlanDeltas(session, weekPlan, "12km at 5:15/km pace");
     expect(result.distDelta).toBe(2.36);
     expect(result.paceDeltaSecs).toBe(19); // 5:34 - 5:15 = 19s slower
@@ -470,38 +470,70 @@ describe("computePlanDeltas", () => {
     expect(result.targetPace).toBe("5:15");
   });
 
-  it("returns null distDelta when mainSet has no parseable distance", () => {
-    const session = { distance: "14.36", avgPace: "5:34" };
+  it("returns null distDelta when mainSet has no parseable distance (threshold)", () => {
+    const session = { distance: "14.36", avgPace: "5:34", type: "run_threshold" };
     const result = computePlanDeltas(session, weekPlan, "4x1km intervals");
     expect(result.distDelta).toBeNull();
     expect(result.paceDeltaSecs).toBe(19); // pace delta still computed
   });
 
   it("returns null paceDeltaSecs when weekPlan has no targetPace", () => {
-    const session = { distance: "14.36", avgPace: "5:34" };
+    const session = { distance: "14.36", avgPace: "5:34", type: "run_threshold" };
     const result = computePlanDeltas(session, { weekGoals: {} }, "12km at 5:15");
     expect(result.distDelta).toBe(2.36);
     expect(result.paceDeltaSecs).toBeNull();
   });
 
   it("returns both null when weekPlan is null", () => {
-    const session = { distance: "14.36", avgPace: "5:34" };
+    const session = { distance: "14.36", avgPace: "5:34", type: "run_threshold" };
     const result = computePlanDeltas(session, null, "12km at 5:15");
     expect(result.paceDeltaSecs).toBeNull();
     expect(result.targetPace).toBeNull();
   });
 
-  it("returns negative paceDeltaSecs when session is faster than target", () => {
-    const session = { distance: "10", avgPace: "5:00" };
+  it("returns negative paceDeltaSecs when threshold session is faster than target", () => {
+    const session = { distance: "10", avgPace: "5:00", type: "run_threshold" };
     const result = computePlanDeltas(session, weekPlan, "10km at 5:15");
     expect(result.paceDeltaSecs).toBe(-15); // 5:00 - 5:15 = -15s (faster)
     expect(result.distDelta).toBe(0);
   });
 
   it("returns null distDelta when session has no distance", () => {
-    const session = { avgPace: "5:34" };
+    const session = { avgPace: "5:34", type: "run_threshold" };
     const result = computePlanDeltas(session, weekPlan, "12km at 5:15");
     expect(result.distDelta).toBeNull();
+  });
+
+  it("uses longRunPace for run_long sessions", () => {
+    const session = { distance: "15.2", avgPace: "5:45", type: "run_long" };
+    const result = computePlanDeltas(session, weekPlan, "15km at 5:20/km pace", "run_long", "5:40");
+    expect(result.distDelta).toBe(0.2);
+    expect(result.targetPace).toBe("5:40");
+    expect(result.paceDeltaSecs).toBe(5); // 5:45 - 5:40 = +5s
+  });
+
+  it("returns null paceDeltaSecs for run_long when no longRunPace given", () => {
+    const session = { distance: "15.2", avgPace: "5:45", type: "run_long" };
+    const result = computePlanDeltas(session, weekPlan, "15km at 5:20/km pace", "run_long", null);
+    expect(result.distDelta).toBe(0.2);
+    expect(result.paceDeltaSecs).toBeNull();
+    expect(result.targetPace).toBeNull();
+  });
+
+  it("returns null paceDeltaSecs for run_easy (no pace target)", () => {
+    const session = { distance: "8.1", avgPace: "5:47", type: "run_easy" };
+    const result = computePlanDeltas(session, weekPlan, "8km easy at HR 140", "run_easy", "5:40");
+    expect(result.distDelta).toBe(0.1);
+    expect(result.paceDeltaSecs).toBeNull();
+    expect(result.targetPace).toBeNull();
+  });
+
+  it("sessionType param overrides session.type", () => {
+    const session = { distance: "8", avgPace: "5:00", type: "run_easy" };
+    // Passing run_threshold as sessionType should use targetPace
+    const result = computePlanDeltas(session, weekPlan, "8km at 5:15", "run_threshold");
+    expect(result.targetPace).toBe("5:15");
+    expect(result.paceDeltaSecs).toBe(-15);
   });
 });
 
@@ -592,6 +624,45 @@ describe("computeRaceProjection", () => {
     ];
     const result = computeRaceProjection(sessions, profile);
     expect(result.sampleSize).toBe(2); // only the two run sessions
+  });
+
+  it("prefers threshold/interval sessions over easy/long when >= 2 quality sessions", () => {
+    const sessions = [
+      { id:1, type:"run_threshold", avgPace:"5:10", date:"2026-04-10" },
+      { id:2, type:"run_interval",  avgPace:"5:05", date:"2026-04-09" },
+      { id:3, type:"run_easy",      avgPace:"6:00", date:"2026-04-08" },
+      { id:4, type:"run_long",      avgPace:"5:58", date:"2026-04-07" },
+    ];
+    const result = computeRaceProjection(sessions, profile);
+    // Should only use the 2 quality sessions — projected pace should be well under 5:40
+    expect(result.sampleSize).toBe(2);
+    expect(result.usingQualitySessions).toBe(true);
+    const projSecs = parsePace(result.projPace);
+    expect(projSecs).toBeLessThan(parsePace("5:30")); // well under the easy/long pace
+  });
+
+  it("falls back to all runs when fewer than 2 quality sessions", () => {
+    const sessions = [
+      { id:1, type:"run_threshold", avgPace:"5:10", date:"2026-04-10" }, // only 1 quality
+      { id:2, type:"run_easy",      avgPace:"5:50", date:"2026-04-08" },
+      { id:3, type:"run_long",      avgPace:"5:55", date:"2026-04-07" },
+    ];
+    const result = computeRaceProjection(sessions, profile);
+    expect(result.sampleSize).toBe(3); // all runs used
+    expect(result.usingQualitySessions).toBe(false);
+  });
+
+  it("usingQualitySessions is false when no quality sessions exist", () => {
+    const runs = makeRuns(["5:40", "5:45", "5:50"]); // all run_easy
+    const result = computeRaceProjection(runs, profile);
+    expect(result.usingQualitySessions).toBe(false);
+    expect(result.sampleSize).toBe(3);
+  });
+
+  it("result has usingQualitySessions property", () => {
+    const runs = makeRuns(["5:15", "5:20"]);
+    const result = computeRaceProjection(runs, profile);
+    expect(result).toHaveProperty("usingQualitySessions");
   });
 });
 

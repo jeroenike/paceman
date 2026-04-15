@@ -444,7 +444,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
               border:`1px solid ${barColor}33` }}>
               <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6 }}>
                 <span style={{ fontSize:11,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em" }}>
-                  Race projection · {proj.sampleSize} run{proj.sampleSize!==1?"s":""}
+                  Race projection · {proj.sampleSize} {proj.usingQualitySessions?"threshold run":"run"}{proj.sampleSize!==1?"s":""}
                 </span>
                 <span style={{ fontSize:11,fontWeight:700,color:barColor }}>{gapLabel}</span>
               </div>
@@ -570,6 +570,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
         onSaveScheduleOverride={onSaveScheduleOverride}
         raceDate={store.profile.goalDate}
         onSaveSession={onSaveSession}
+        longRunPace={store.profile.longRunPace}
       />
     </div>
   );
@@ -577,7 +578,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
 
 // ── Week Day List ──
 
-function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride, raceDate, onSaveSession }) {
+function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride, raceDate, onSaveSession, longRunPace }) {
   const [pickerDay, setPickerDay] = useState(null);
   const [inlineFormDay, setInlineFormDay] = useState(null); // {day, initial} or null
   const weekStartDate = new Date(weekStart + "T00:00:00");
@@ -760,7 +761,7 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                                 {linked.te&&<span>TE {linked.te}</span>}
                               </div>
                               {(()=>{
-                                const deltas = computePlanDeltas(linked, weekPlan, mainSet);
+                                const deltas = computePlanDeltas(linked, weekPlan, mainSet, linked.type, longRunPace);
                                 if (deltas.distDelta === null && deltas.paceDeltaSecs === null) return null;
                                 return (
                                   <div style={{ display:"flex",gap:8,flexWrap:"wrap",fontSize:11,marginBottom:6 }}>
@@ -1762,7 +1763,7 @@ export default function App() {
         const plan = (store.weekPlans||[]).find(p=>p.weekStart===d.plannedWeekStart);
         const planned = plan?.weekGoals?.daySessions?.[d.plannedDay];
         if (!planned) return "";
-        const deltas = computePlanDeltas(d, plan, planned.mainSet);
+        const deltas = computePlanDeltas(d, plan, planned.mainSet, d.type, store.profile.longRunPace);
         const deltaParts = [
           deltas.paceDeltaSecs !== null
             ? `pace ${deltas.paceDeltaSecs>0?"+":""}${secsTopace(Math.abs(deltas.paceDeltaSecs))}/km (${deltas.paceDeltaSecs>0?"slower":"faster"} than target ${deltas.targetPace})`
