@@ -9,6 +9,7 @@ import {
   isDayAfterRace, isDayRaceDay, isWeekInPast,
   DAY_LABELS, SESSION_LABELS, SESSION_COLORS,
   secsToTime, parseDistanceFromMainSet, computePlanDeltas, computeRaceProjection,
+  deriveThresholdPace, deriveLongRunPace,
 } from "./utils.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -664,6 +665,34 @@ describe("computeRaceProjection", () => {
     const result = computeRaceProjection(runs, profile);
     expect(result).toHaveProperty("usingQualitySessions");
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// deriveThresholdPace / deriveLongRunPace
+// ─────────────────────────────────────────────────────────────────────────────
+describe("deriveThresholdPace", () => {
+  it("derives 4:55 from 5:15 race pace", () => expect(deriveThresholdPace("5:15")).toBe("4:55"));
+  it("derives a faster pace than input", () => {
+    const result = deriveThresholdPace("5:15");
+    expect(parsePace(result)).toBeLessThan(parsePace("5:15"));
+  });
+  it("returns null for null input", () => expect(deriveThresholdPace(null)).toBeNull());
+  it("returns null for empty string", () => expect(deriveThresholdPace("")).toBeNull());
+});
+
+describe("deriveLongRunPace", () => {
+  it("derives a pace in the 5:35–5:42 range from 5:15 race pace", () => {
+    const result = deriveLongRunPace("5:15");
+    const secs = parsePace(result);
+    expect(secs).toBeGreaterThanOrEqual(335); // ~5:35
+    expect(secs).toBeLessThanOrEqual(342);    // ~5:42
+  });
+  it("derives a slower pace than input", () => {
+    const result = deriveLongRunPace("5:15");
+    expect(parsePace(result)).toBeGreaterThan(parsePace("5:15"));
+  });
+  it("returns null for null input", () => expect(deriveLongRunPace(null)).toBeNull());
+  it("returns null for empty string", () => expect(deriveLongRunPace("")).toBeNull());
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

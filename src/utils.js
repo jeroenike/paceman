@@ -305,6 +305,28 @@ export function computePlanDeltas(session, weekPlan, mainSet, sessionType, longR
 }
 
 /**
+ * Derive threshold pace from a race pace string.
+ * Uses ~6.5% faster than race pace (Jack Daniels T-pace methodology).
+ * e.g. 5:15/km race pace → 4:55/km threshold
+ */
+export function deriveThresholdPace(racePaceStr) {
+  const secs = parsePace(racePaceStr);
+  if (!secs) return null;
+  return secsTopace(Math.round(secs * 0.935));
+}
+
+/**
+ * Derive long run pace from a race pace string.
+ * Uses ~7.5% slower than race pace (aerobic base zone).
+ * e.g. 5:15/km race pace → 5:39/km long run
+ */
+export function deriveLongRunPace(racePaceStr) {
+  const secs = parsePace(racePaceStr);
+  if (!secs) return null;
+  return secsTopace(Math.round(secs * 1.075));
+}
+
+/**
  * Compute projected race finish time from recent logged runs.
  * Prefers threshold + interval sessions (best race pace predictors).
  * Falls back to all run sessions if fewer than 2 quality sessions exist.

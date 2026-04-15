@@ -8,6 +8,7 @@ import {
   computeAutoScore, bulkDeleteSessions as utilBulkDelete,
   isDayAfterRace, isDayRaceDay, isWeekInPast,
   secsToTime, computePlanDeltas, computeRaceProjection,
+  deriveThresholdPace, deriveLongRunPace,
 } from "./utils.js";
 import { DEV_SEED } from "./dev-seed.js";
 
@@ -15,8 +16,8 @@ const STORAGE_KEY = "paceman_v4";
 const RACE_GOALS = ["5km","10km","15km","Half Marathon","Marathon","Trail Run","Custom..."];
 
 const defaultProfile = {
-  name:"", goal:"", goalCustom:"", goalDate:"", goalTime:"", thresholdPace:"", racePace:"",
-  longRunPace:"", easyHR:"", experience:"", injuries:[],
+  name:"", goal:"", goalCustom:"", goalDate:"", goalTime:"", racePace:"",
+  garminPredictedTime:"", easyHR:"", experience:"", injuries:[],
   schedule:{ Mon:"rest", Tue:"run_threshold", Wed:"crossfit", Thu:"run_easy", Fri:"crossfit", Sat:"crossfit", Sun:"run_long" },
 };
 
@@ -404,6 +405,12 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
   const hasPlan = !!activePlan;
   const isPastWeek = activeWeekStart < getCurrentWeekStart();
 
+  // Training paces: prefer Garmin-predicted time (current fitness) over goal race pace
+  const p = store.profile;
+  const trainingBasePace = p.garminPredictedTime
+    ? computeRacePace(p.goal, p.garminPredictedTime) : p.racePace;
+  const effectiveLongRunPace = p.longRunPace || deriveLongRunPace(trainingBasePace);
+
   // Week date range label
   const weekStartDate = new Date(activeWeekStart+"T00:00:00");
   const weekEndDate = new Date(weekStartDate); weekEndDate.setDate(weekStartDate.getDate()+6);
@@ -570,7 +577,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
         onSaveScheduleOverride={onSaveScheduleOverride}
         raceDate={store.profile.goalDate}
         onSaveSession={onSaveSession}
-        longRunPace={store.profile.longRunPace}
+        longRunPace={effectiveLongRunPace}
       />
     </div>
   );
@@ -1076,7 +1083,9 @@ function ProgressScreen({ store }) {
   const goalTime = p.goalTime || null;
   const goalDate = p.goalDate || null;
   const racePace = p.racePace || null;           // target race pace e.g. "5:15"
-  const thresholdPace = p.thresholdPace || null; // threshold e.g. "5:00"
+  const trainingBase = p.garminPredictedTime ? computeRacePace(p.goal, p.garminPredictedTime) : p.racePace;
+  const thresholdPace = p.thresholdPace || deriveThresholdPace(trainingBase); // e.g. "4:55"
+  const effectiveLongRun = p.longRunPace || deriveLongRunPace(trainingBase);  // e.g. "5:39"
   const easyHR = p.easyHR || null;               // easy HR range e.g. "130-140"
   const daysToRace = goalDate ? Math.ceil((new Date(goalDate)-new Date())/(1000*60*60*24)) : null;
 
@@ -1516,30 +1525,59 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
           </div>
           <Field label="Race date" value={draft.goalDate} onChange={v=>set("goalDate",v)} type="date"/>
         </div>
-        <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
-          <Field label="Threshold pace" value={draft.thresholdPace} onChange={v=>set("thresholdPace",v)} placeholder="5:00"/>
-          <div>
-            <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>Race pace</label>
-            {!racePaceOverride && autoRacePace ? (
-              <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#f8f8f6" }}>
-                <span style={{ fontSize:15,color:"#1a1a1a",fontWeight:600 }}>{autoRacePace}/km</span>
-                <button onClick={()=>{ set("racePace",autoRacePace); setRacePaceOverride(true); }}
-                  style={{ fontSize:11,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>Edit</button>
-              </div>
-            ) : (
-              <div>
-                <input value={draft.racePace}
-                  onChange={e=>{ set("racePace",e.target.value); const gt=computeGoalTime(draft.goal,e.target.value); if(gt) set("goalTime",gt); }}
-                  placeholder={autoRacePace||"5:15"} inputMode="text"
-                  style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #1B6FE855",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
-                {autoRacePace && <button onClick={()=>{ set("racePace",""); setRacePaceOverride(false); }}
-                  style={{ fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",marginTop:4,padding:0 }}>← Auto ({autoRacePace}/km)</button>}
-              </div>
-            )}
-          </div>
-          <Field label="Long run pace" value={draft.longRunPace} onChange={v=>set("longRunPace",v)} placeholder="6:20"/>
-          <Field label="Easy HR (bpm)" value={draft.easyHR} onChange={v=>set("easyHR",v)} placeholder="130-140"/>
+        <div>
+          <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>Race pace</label>
+          {!racePaceOverride && autoRacePace ? (
+            <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#f8f8f6" }}>
+              <span style={{ fontSize:15,color:"#1a1a1a",fontWeight:600 }}>{autoRacePace}/km</span>
+              <button onClick={()=>{ set("racePace",autoRacePace); setRacePaceOverride(true); }}
+                style={{ fontSize:11,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>Edit</button>
+            </div>
+          ) : (
+            <div>
+              <input value={draft.racePace}
+                onChange={e=>{ set("racePace",e.target.value); const gt=computeGoalTime(draft.goal,e.target.value); if(gt) set("goalTime",gt); }}
+                placeholder={autoRacePace||"5:15"} inputMode="text"
+                style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #1B6FE855",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
+              {autoRacePace && <button onClick={()=>{ set("racePace",""); setRacePaceOverride(false); }}
+                style={{ fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",marginTop:4,padding:0 }}>← Auto ({autoRacePace}/km)</button>}
+            </div>
+          )}
         </div>
+        <div>
+          <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>
+            Garmin predicted time <span style={{ fontWeight:400,color:"#bbb",fontSize:10 }}>optional</span>
+          </label>
+          <input value={draft.garminPredictedTime||""} onChange={e=>set("garminPredictedTime",e.target.value)}
+            placeholder="e.g. 1:56:30 — sets training paces from current fitness"
+            inputMode="text"
+            style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
+          {(()=>{
+            const base = draft.garminPredictedTime
+              ? computeRacePace(draft.goal, draft.garminPredictedTime)
+              : (racePaceOverride ? draft.racePace : autoRacePace);
+            const thr = deriveThresholdPace(base);
+            const lng = deriveLongRunPace(base);
+            if (!thr) return null;
+            const isGarmin = !!draft.garminPredictedTime;
+            return (
+              <div style={{ display:"flex",gap:8,marginTop:8 }}>
+                <div style={{ padding:"6px 10px",borderRadius:8,background:"#f5f5f3",fontSize:12,flex:1,textAlign:"center" }}>
+                  <div style={{ fontSize:10,color:"#aaa",marginBottom:2 }}>Threshold</div>
+                  <div style={{ fontWeight:700,color:"#1B6FE8" }}>{thr}/km</div>
+                </div>
+                <div style={{ padding:"6px 10px",borderRadius:8,background:"#f5f5f3",fontSize:12,flex:1,textAlign:"center" }}>
+                  <div style={{ fontSize:10,color:"#aaa",marginBottom:2 }}>Long run</div>
+                  <div style={{ fontWeight:700,color:"#3B6D11" }}>{lng}/km</div>
+                </div>
+                <div style={{ padding:"6px 10px",borderRadius:8,background:isGarmin?"#fff8f0":"#f5f5f3",border:isGarmin?"1px solid #fcd0b088":"none",fontSize:10,color:isGarmin?"#c04a00":"#aaa",flex:1.5,display:"flex",alignItems:"center",justifyContent:"center",textAlign:"center",lineHeight:1.3 }}>
+                  {isGarmin?"Based on Garmin prediction":"Based on goal pace"}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+        <Field label="Easy HR (bpm)" value={draft.easyHR} onChange={v=>set("easyHR",v)} placeholder="130-140"/>
         <div>
           <SectionLabel>Experience</SectionLabel>
           <select value={draft.experience} onChange={e=>set("experience",e.target.value)}
@@ -1763,7 +1801,7 @@ export default function App() {
         const plan = (store.weekPlans||[]).find(p=>p.weekStart===d.plannedWeekStart);
         const planned = plan?.weekGoals?.daySessions?.[d.plannedDay];
         if (!planned) return "";
-        const deltas = computePlanDeltas(d, plan, planned.mainSet, d.type, store.profile.longRunPace);
+        const deltas = computePlanDeltas(d, plan, planned.mainSet, d.type, effectiveLongRun);
         const deltaParts = [
           deltas.paceDeltaSecs !== null
             ? `pace ${deltas.paceDeltaSecs>0?"+":""}${secsTopace(Math.abs(deltas.paceDeltaSecs))}/km (${deltas.paceDeltaSecs>0?"slower":"faster"} than target ${deltas.targetPace})`
@@ -1775,7 +1813,7 @@ export default function App() {
         return `\nPlanned for ${d.plannedDay}: type=${planned.type}, mainSet="${planned.mainSet||"none"}", targetPace=${plan.weekGoals.targetPace||"n/a"}${deltaParts?`\nDeltas: ${deltaParts}`:""}`;
       })();
       const r = await callClaude(SYSTEM,
-        `Analyze session — ${goalLabel} in ${p.goalTime} (threshold: ${p.thresholdPace}/km):
+        `Analyze session — ${goalLabel} in ${p.goalTime} (threshold: ${thresholdPace}/km):
 Type: ${d.type} | Date: ${d.date} | Location: ${d.location||"unknown"}
 Distance: ${d.distance||"unknown"}km | Elevation: ${d.elevation||"unknown"}m
 Pace: ${d.avgPace}/km | Avg HR: ${d.avgHR} | Max HR: ${d.maxHR} | Cadence: ${d.cadence} spm | TE: ${d.te} | RPE: ${d.rpe}/10
@@ -1834,7 +1872,7 @@ ${prevWeekSummary ? `\n${prevWeekSummary}\n` : ""}
 Athlete profile:
 - Goal: ${goalLabel} in ${p.goalTime}${p.goalDate?` on ${p.goalDate}`:""}
 - Level: ${p.experience}
-- Threshold pace: ${p.thresholdPace}/km | Race pace: ${p.racePace}/km | Long run pace: ${p.longRunPace}/km | Easy HR: ${p.easyHR} bpm
+- Threshold pace: ${thresholdPace}/km | Race pace: ${p.racePace}/km | Long run pace: ${effectiveLongRun}/km | Easy HR: ${p.easyHR} bpm
 - Schedule (FIXED — use exactly these session types in daySessions): ${JSON.stringify(effectiveSchedule)}
 - Injuries: ${p.injuries.join(", ")||"none"}
 
@@ -1909,7 +1947,7 @@ Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.
         "You are an elite running coach AI. Output valid JSON only — no markdown, no prose.",
         `Generate a single training session for ${day}, week starting ${weekStart}.
 Session type: ${SESSION_LABELS[newType] || newType} (${newType})
-Athlete: ${goalLabel} in ${p.goalTime} | Threshold: ${p.thresholdPace}/km | Race pace: ${p.racePace}/km | Long run pace: ${p.longRunPace}/km | Easy HR: ${p.easyHR} bpm | Level: ${p.experience}
+Athlete: ${goalLabel} in ${p.goalTime} | Threshold: ${thresholdPace}/km | Race pace: ${p.racePace}/km | Long run pace: ${effectiveLongRun}/km | Easy HR: ${p.easyHR} bpm | Level: ${p.experience}
 Week context: ${weekCtx}
 Injuries: ${(p.injuries || []).join(", ") || "none"}
 
@@ -2014,7 +2052,7 @@ DAY_JSON`
       const dayGoal = store.weekPlan?.weekGoals?.dayGoals?.[day];
       const r = await callClaude(SYSTEM,
         `Complete session plan: ${SESSION_LABELS[type]} on ${day}
-Athlete: ${goalLabel} in ${p.goalTime} | Threshold ${p.thresholdPace}/km | Easy HR ${p.easyHR} bpm | ${p.experience}
+Athlete: ${goalLabel} in ${p.goalTime} | Threshold ${thresholdPace}/km | Easy HR ${p.easyHR} bpm | ${p.experience}
 Injuries: ${p.injuries.join(", ")||"none"}
 ${dayGoal?`Week goal for this session: ${dayGoal}`:""}
 Recent load: ${(store.sessions||[]).slice(-2).map(s=>`${s.type} TE:${s.te}`).join(", ")||"unknown"}
