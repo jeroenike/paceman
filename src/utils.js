@@ -244,3 +244,132 @@ export function isDayRaceDay(dayDateStr, raceDate) {
 export function isWeekInPast(weekStart) {
   return weekStart < getCurrentWeekStart();
 }
+
+// ── Plan vs actual comparison ─────────────────────────────────────────────────
+
+/** Seconds → "H:MM:SS" or "M:SS" string, null if falsy or negative */
+export function secsToTime(secs) {
+  if (!secs || secs < 0) return null;
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.round(secs % 60);
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+    : `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/**
+ * Extract the leading distance (km) from a Claude-generated mainSet string.
+ * Returns null for interval notation like "4x1km" or when no distance is found.
+ */
+export function parseDistanceFromMainSet(mainSet) {
+  if (!mainSet) return null;
+  // Primary: number at start of string followed by km, e.g. "12km at 5:15"
+  const a = mainSet.match(/^(\d+(?:\.\d+)?)\s*km/i);
+  if (a) return parseFloat(a[1]);
+  // Secondary: distance before a qualifier, e.g. "Easy 12km at HR 135"
+  const b = mainSet.match(/\b(\d+(?:\.\d+)?)\s*km\s+(?:at|@|easy|threshold|long|run)/i);
+  if (b) return parseFloat(b[1]);
+  return null;
+}
+
+/**
+ * Compute signed deltas between a logged session and its week plan.
+ * Target pace is session-type-aware:
+ *   - run_threshold / run_interval → weekPlan.weekGoals.targetPace
+ *   - run_long                     → longRunPace from profile
+ *   - run_easy                     → no pace comparison (paceDeltaSecs = null)
+ * Returns { distDelta, plannedDist, paceDeltaSecs, targetPace }.
+ */
+export function computePlanDeltas(session, weekPlan, mainSet, sessionType, longRunPace) {
+  const actualDist = parseFloat(session?.distance || "");
+  const plannedDist = parseDistanceFromMainSet(mainSet);
+  const distDelta = (!isNaN(actualDist) && actualDist > 0 && plannedDist !== null)
+    ? parseFloat((actualDist - plannedDist).toFixed(2)) : null;
+
+  const type = sessionType || session?.type;
+  let targetPace = null;
+  if (type === "run_threshold" || type === "run_interval") {
+    targetPace = weekPlan?.weekGoals?.targetPace || null;
+  } else if (type === "run_long") {
+    targetPace = longRunPace || null;
+  }
+  // run_easy: targetPace stays null — no meaningful pace target
+
+  const actualPaceSecs = parsePace(session?.avgPace);
+  const targetPaceSecs = parsePace(targetPace);
+  const paceDeltaSecs = (actualPaceSecs !== null && targetPaceSecs !== null)
+    ? actualPaceSecs - targetPaceSecs : null;
+
+  return { distDelta, plannedDist, paceDeltaSecs, targetPace };
+}
+
+/**
+ * Derive threshold pace from a race pace string.
+ * Uses ~6.5% faster than race pace (Jack Daniels T-pace methodology).
+ * e.g. 5:15/km race pace → 4:55/km threshold
+ */
+export function deriveThresholdPace(racePaceStr) {
+  const secs = parsePace(racePaceStr);
+  if (!secs) return null;
+  return secsTopace(Math.round(secs * 0.935));
+}
+
+/**
+ * Derive long run pace from a race pace string.
+ * Uses ~7.5% slower than race pace (aerobic base zone).
+ * e.g. 5:15/km race pace → 5:39/km long run
+ */
+export function deriveLongRunPace(racePaceStr) {
+  const secs = parsePace(racePaceStr);
+  if (!secs) return null;
+  return secsTopace(Math.round(secs * 1.075));
+}
+
+/**
+ * Compute projected race finish time from recent logged runs.
+ * Prefers threshold + interval sessions (best race pace predictors).
+ * Falls back to all run sessions if fewer than 2 quality sessions exist.
+ * Uses exponential recency weighting (weight = 0.85^i) across last 8 sessions.
+ * Requires at least 2 sessions and a valid race goal + race pace in profile.
+ */
+export function computeRaceProjection(sessions, profile) {
+  const raceDist = RACE_DISTANCES[profile?.goal];
+  const goalPaceSecs = parsePace(profile?.racePace);
+  if (!raceDist || !goalPaceSecs) return null;
+
+  const allRuns = (sessions || [])
+    .filter(s => s.type?.startsWith("run") && parsePace(s.avgPace) !== null)
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  // Quality sessions (threshold + intervals) predict race pace far better than
+  // easy/long runs, which are deliberately run 40–90s/km slower than race effort.
+  const qualityRuns = allRuns.filter(s => s.type === "run_threshold" || s.type === "run_interval");
+  const usingQualitySessions = qualityRuns.length >= 2;
+  const runs = usingQualitySessions ? qualityRuns.slice(0, 8) : allRuns.slice(0, 8);
+
+  if (runs.length < 2) return null;
+
+  let weightedSum = 0, totalWeight = 0;
+  runs.forEach((s, i) => {
+    const w = Math.pow(0.85, i);
+    weightedSum += parsePace(s.avgPace) * w;
+    totalWeight += w;
+  });
+  const projPaceSecs = weightedSum / totalWeight;
+  const projTimeSecs = Math.round(projPaceSecs * raceDist);
+  const goalTimeSecs = Math.round(goalPaceSecs * raceDist);
+  const gapSecs = projTimeSecs - goalTimeSecs; // positive = slower than goal
+
+  return {
+    projPace: secsTopace(Math.round(projPaceSecs)),
+    projTime: secsToTime(projTimeSecs),
+    goalTime: secsToTime(goalTimeSecs),
+    gapSecs,
+    goalTimeSecs,
+    sampleSize: runs.length,
+    usingQualitySessions,
+    // % of goal achieved — how close projected is to goal (100% = exactly on goal, <100% = behind)
+    pct: Math.min(100, Math.round((goalTimeSecs / projTimeSecs) * 100)),
+  };
+}
