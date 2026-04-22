@@ -9,10 +9,11 @@ export const DEV_SEED = {
     name: "Test Runner",
     goal: "Half Marathon",
     goalCustom: "",
+    goalCustomDist: "",
     goalDate: "2026-05-30",
     goalTime: "1:50:46",
     racePace: "5:15",
-    garminPredictedTime: "1:56:30",
+    garminPredicted: "1:56:30",
     easyHR: "145",
     experience: "Intermediate",
     injuries: [],
@@ -450,6 +451,99 @@ export const DEV_SEED = {
     },
   ],
 
+  strava: null,
+  weekScheduleOverrides: {},
+};
+
+// ── Named scenario seeds ───────────────────────────────────────────────────────
+
+// 🟢 GREEN — Alex: on track / slightly ahead of goal
+// Goal 1:48:00 HM, Garmin predicts 1:46:30 → ~1.5 min ahead
+export const DEV_SEED_GREEN = {
+  profile: {
+    name: "Alex",
+    goal: "Half Marathon",
+    goalCustom: "",
+    goalCustomDist: "",
+    goalDate: "2026-05-30",
+    goalTime: "1:48:00",
+    racePace: "5:07",
+    garminPredicted: "1:46:30",
+    easyHR: "142",
+    experience: "Intermediate",
+    injuries: [],
+    schedule: { Mon:"rest", Tue:"run_threshold", Wed:"rest", Thu:"run_easy", Fri:"rest", Sat:"rest", Sun:"run_long" },
+  },
+  weekPlans: [
+    {
+      weekStart: "2026-04-13",
+      weekGoals: {
+        totalDistance: 35,
+        longRunDistance: 16,
+        runsPlanned: 3,
+        targetPace: "5:07",
+        dayGoals: { Tue:"Race-pace threshold", Thu:"Easy aerobic", Sun:"Long run at target" },
+        daySessions: {
+          Tue: { type:"run_threshold", mainSet:"8km — 2km warm-up, 4km at 4:48/km, 2km cool-down" },
+          Thu: { type:"run_easy",      mainSet:"8km easy at HR 140" },
+          Sun: { type:"run_long",      mainSet:"16km at 5:10/km pace. 5km easy, 9km at target, 2km relaxed." },
+        },
+      },
+    },
+  ],
+  sessions: [
+    { id:"g-1", type:"run_threshold", date:"2026-04-15", distance:"8.2", avgPace:"4:49", avgHR:"168", maxHR:"180", cadence:"177", elevation:"30", rpe:"8", te:"4.1", notes:"Solid threshold", plannedDay:"Tue", plannedWeekStart:"2026-04-13" },
+    { id:"g-2", type:"run_easy",      date:"2026-04-17", distance:"8.0", avgPace:"5:22", avgHR:"140", maxHR:"152", cadence:"169", elevation:"38", rpe:"4", te:"2.7", notes:"Easy legs", plannedDay:"Thu", plannedWeekStart:"2026-04-13" },
+    { id:"g-3", type:"run_threshold", date:"2026-04-08", distance:"8.0", avgPace:"4:51", avgHR:"166", maxHR:"179", cadence:"176", elevation:"28", rpe:"8", te:"4.0", notes:"Strong week" },
+    { id:"g-4", type:"run_long",      date:"2026-04-06", distance:"16.1", avgPace:"5:18", avgHR:"151", maxHR:"167", cadence:"168", elevation:"142", rpe:"7", te:"4.1", notes:"Long run felt controlled" },
+  ],
+  strava: null,
+  weekScheduleOverrides: {},
+};
+
+// 🟡 ORANGE — Sam: achievable with effort, 5–6 min behind with 6 weeks left
+// Reuses DEV_SEED data (1:50:46 goal, Garmin 1:56:30 → ~5.5 min behind)
+export const DEV_SEED_ORANGE = DEV_SEED;
+
+// 🔴 RED — Jordan: high risk, 21+ min behind goal
+// Goal 1:50:00 HM but running at 6:00–6:30/km long-run pace → projected ~2:12
+export const DEV_SEED_RED = {
+  profile: {
+    name: "Jordan",
+    goal: "Half Marathon",
+    goalCustom: "",
+    goalCustomDist: "",
+    goalDate: "2026-05-30",
+    goalTime: "1:50:00",
+    racePace: "5:11",
+    garminPredicted: "",
+    easyHR: "150",
+    experience: "Beginner",
+    injuries: ["Left knee — mild IT band tightness"],
+    schedule: { Mon:"rest", Tue:"run_easy", Wed:"rest", Thu:"rest", Fri:"rest", Sat:"rest", Sun:"run_long" },
+  },
+  weekPlans: [
+    {
+      weekStart: "2026-04-13",
+      weekGoals: {
+        totalDistance: 20,
+        longRunDistance: 10,
+        runsPlanned: 2,
+        targetPace: "5:11",
+        dayGoals: { Tue:"Easy aerobic run", Sun:"Long run — build base" },
+        daySessions: {
+          Tue: { type:"run_easy", mainSet:"8km easy at HR 148" },
+          Sun: { type:"run_long", mainSet:"10km at comfortable effort. Walk breaks OK." },
+        },
+      },
+    },
+  ],
+  sessions: [
+    { id:"r-1", type:"run_easy", date:"2026-04-15", distance:"7.8", avgPace:"6:28", avgHR:"155", maxHR:"170", cadence:"161", elevation:"45", rpe:"7", te:"3.1", notes:"Felt heavy" },
+    { id:"r-2", type:"run_long", date:"2026-04-13", distance:"9.5",  avgPace:"6:15", avgHR:"157", maxHR:"172", cadence:"162", elevation:"68", rpe:"8", te:"3.4", notes:"Knee ached last 2km" },
+    { id:"r-3", type:"run_easy", date:"2026-04-08", distance:"6.2",  avgPace:"6:32", avgHR:"152", maxHR:"168", cadence:"160", elevation:"32", rpe:"6", te:"2.8", notes:"Slow but steady" },
+    { id:"r-4", type:"run_long", date:"2026-04-05", distance:"10.1", avgPace:"6:22", avgHR:"158", maxHR:"174", cadence:"162", elevation:"86", rpe:"8", te:"3.5", notes:"Tough Sunday" },
+  ],
   strava: null,
   weekScheduleOverrides: {},
 };
