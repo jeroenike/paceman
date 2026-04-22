@@ -1816,14 +1816,19 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
 function NavBar({ screen, onNav }) {
   const nav = [{id:"home",label:"Training",icon:"▦"},{id:"log",label:"Sessions",icon:"⊕"},{id:"progress",label:"Progress",icon:"↗"},{id:"profile",label:"Profile",icon:"◉"}];
   return (
-    <div style={{ position:"sticky",bottom:0,background:"#fff",borderTop:"1px solid #eee",display:"flex",justifyContent:"space-around",padding:"8px 0 env(safe-area-inset-bottom, 12px)",zIndex:100 }}>
-      {nav.map(n=>(
-        <button key={n.id} onClick={()=>onNav(n.id)}
-          style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:2,padding:"6px 16px",background:"none",border:"none",cursor:"pointer",color:screen===n.id?"#1B6FE8":"#aaa" }}>
-          <span style={{ fontSize:18 }}>{n.icon}</span>
-          <span style={{ fontSize:11,fontWeight:screen===n.id?700:400 }}>{n.label}</span>
-        </button>
-      ))}
+    <div style={{ position:"sticky",bottom:0,background:"#fff",borderTop:"1px solid #eee",zIndex:100 }}>
+      <div style={{ display:"flex",justifyContent:"space-around",padding:"8px 0 env(safe-area-inset-bottom, 12px)" }}>
+        {nav.map(n=>(
+          <button key={n.id} onClick={()=>onNav(n.id)}
+            style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:2,padding:"6px 16px",background:"none",border:"none",cursor:"pointer",color:screen===n.id?"#1B6FE8":"#aaa" }}>
+            <span style={{ fontSize:18 }}>{n.icon}</span>
+            <span style={{ fontSize:11,fontWeight:screen===n.id?700:400 }}>{n.label}</span>
+          </button>
+        ))}
+      </div>
+      <div style={{ textAlign:"center",fontSize:10,color:"#ccc",paddingBottom:"env(safe-area-inset-bottom, 4px)",marginTop:-6,letterSpacing:"0.04em" }}>
+        v{__APP_VERSION__}
+      </div>
     </div>
   );
 }
