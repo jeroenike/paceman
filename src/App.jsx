@@ -8,6 +8,7 @@ import {
   computeAutoScore, bulkDeleteSessions as utilBulkDelete,
   isDayAfterRace, isDayRaceDay, isWeekInPast,
   secsToTime, computePlanDeltas, computeRaceProjection,
+  deriveThresholdPace, deriveLongRunPace,
 } from "./utils.js";
 import { DEV_SEED, DEV_SEED_GREEN, DEV_SEED_ORANGE, DEV_SEED_RED } from "./dev-seed.js";
 
@@ -455,6 +456,12 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
   const hasPlan = !!activePlan;
   const isPastWeek = activeWeekStart < getCurrentWeekStart();
 
+  // Training paces: prefer Garmin-predicted time (current fitness) over goal race pace
+  const p = store.profile;
+  const trainingBasePace = p.garminPredictedTime
+    ? computeRacePace(p.goal, p.garminPredictedTime) : p.racePace;
+  const effectiveLongRunPace = p.longRunPace || deriveLongRunPace(trainingBasePace);
+
   // Week date range label
   const weekStartDate = new Date(activeWeekStart+"T00:00:00");
   const weekEndDate = new Date(weekStartDate); weekEndDate.setDate(weekStartDate.getDate()+6);
@@ -490,7 +497,6 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
         {(()=>{
           const proj = computeRaceProjection(store.sessions, store.profile);
           if (!proj) return null;
-          // Smart color: gap% × weeks remaining
           const weeksLeft = store.profile.goalDate
             ? Math.max(0, Math.ceil((new Date(store.profile.goalDate)-new Date())/(1000*60*60*24*7)))
             : null;
@@ -512,6 +518,11 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
           }
           const gapLabel = proj.gapSecs === 0 ? "On target" : proj.gapSecs > 0
             ? `${secsToTime(Math.abs(proj.gapSecs))} behind` : `${secsToTime(Math.abs(proj.gapSecs))} ahead`;
+          const sourceLabel = proj.source === "garmin"
+            ? "Garmin predicted"
+            : proj.usingQualitySessions
+              ? `${proj.sampleSize} threshold run${proj.sampleSize!==1?"s":""}`
+              : `${proj.sampleSize} run${proj.sampleSize!==1?"s":""}`;
           return (
             <div style={{ marginTop:10,paddingTop:10,borderTop:"1px solid #f0f0ec" }}>
               <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5 }}>
@@ -530,7 +541,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
                 <div style={{ height:"100%",borderRadius:3,background:barColor,width:`${proj.pct}%`,transition:"width 0.4s" }}/>
               </div>
               <div style={{ display:"flex",justifyContent:"space-between",marginTop:4,fontSize:11,color:"#aaa" }}>
-                <span>{proj.source==="garmin" ? "Garmin predicted" : `${proj.sampleSize} run${proj.sampleSize!==1?"s":""}`}{weeksLeft!==null&&weeksLeft>0?` · ${weeksLeft}w left`:""}</span>
+                <span>{sourceLabel}{weeksLeft!==null&&weeksLeft>0?` · ${weeksLeft}w left`:""}</span>
                 <span>goal {proj.goalTime}</span>
               </div>
             </div>
@@ -641,6 +652,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
         onSaveScheduleOverride={onSaveScheduleOverride}
         raceDate={store.profile.goalDate}
         onSaveSession={onSaveSession}
+        longRunPace={effectiveLongRunPace}
       />
     </div>
   );
@@ -648,7 +660,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
 
 // ── Week Day List ──
 
-function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride, raceDate, onSaveSession }) {
+function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride, raceDate, onSaveSession, longRunPace }) {
   const [pickerDay, setPickerDay] = useState(null);
   const [inlineFormDay, setInlineFormDay] = useState(null); // {day, initial} or null
   const weekStartDate = new Date(weekStart + "T00:00:00");
@@ -831,7 +843,7 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                                 {linked.te&&<span>TE {linked.te}</span>}
                               </div>
                               {(()=>{
-                                const deltas = computePlanDeltas(linked, weekPlan, mainSet);
+                                const deltas = computePlanDeltas(linked, weekPlan, mainSet, linked.type, longRunPace);
                                 if (deltas.distDelta === null && deltas.paceDeltaSecs === null) return null;
                                 return (
                                   <div style={{ display:"flex",gap:8,flexWrap:"wrap",fontSize:11,marginBottom:6 }}>
@@ -1658,6 +1670,40 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
         )}
         <Field label="Easy HR (bpm)" value={draft.easyHR} onChange={v=>set("easyHR",v)} placeholder="130-140"/>
         <div>
+          <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>
+            Garmin predicted time <span style={{ fontWeight:400,color:"#bbb",fontSize:10 }}>optional</span>
+          </label>
+          <input value={draft.garminPredictedTime||""} onChange={e=>set("garminPredictedTime",e.target.value)}
+            placeholder="e.g. 1:56:30 — sets training paces from current fitness"
+            inputMode="text"
+            style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
+          {(()=>{
+            const base = draft.garminPredictedTime
+              ? computeRacePace(draft.goal, draft.garminPredictedTime)
+              : (racePaceOverride ? draft.racePace : autoRacePace);
+            const thr = deriveThresholdPace(base);
+            const lng = deriveLongRunPace(base);
+            if (!thr) return null;
+            const isGarmin = !!draft.garminPredictedTime;
+            return (
+              <div style={{ display:"flex",gap:8,marginTop:8 }}>
+                <div style={{ padding:"6px 10px",borderRadius:8,background:"#f5f5f3",fontSize:12,flex:1,textAlign:"center" }}>
+                  <div style={{ fontSize:10,color:"#aaa",marginBottom:2 }}>Threshold</div>
+                  <div style={{ fontWeight:700,color:"#1B6FE8" }}>{thr}/km</div>
+                </div>
+                <div style={{ padding:"6px 10px",borderRadius:8,background:"#f5f5f3",fontSize:12,flex:1,textAlign:"center" }}>
+                  <div style={{ fontSize:10,color:"#aaa",marginBottom:2 }}>Long run</div>
+                  <div style={{ fontWeight:700,color:"#3B6D11" }}>{lng}/km</div>
+                </div>
+                <div style={{ padding:"6px 10px",borderRadius:8,background:isGarmin?"#fff8f0":"#f5f5f3",border:isGarmin?"1px solid #fcd0b088":"none",fontSize:10,color:isGarmin?"#c04a00":"#aaa",flex:1.5,display:"flex",alignItems:"center",justifyContent:"center",textAlign:"center",lineHeight:1.3 }}>
+                  {isGarmin?"Based on Garmin prediction":"Based on goal pace"}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+        <Field label="Easy HR (bpm)" value={draft.easyHR} onChange={v=>set("easyHR",v)} placeholder="130-140"/>
+        <div>
           <SectionLabel>Experience</SectionLabel>
           <select value={draft.experience} onChange={e=>set("experience",e.target.value)}
             style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none" }}>
@@ -1887,7 +1933,7 @@ export default function App() {
         const plan = (store.weekPlans||[]).find(p=>p.weekStart===d.plannedWeekStart);
         const planned = plan?.weekGoals?.daySessions?.[d.plannedDay];
         if (!planned) return "";
-        const deltas = computePlanDeltas(d, plan, planned.mainSet);
+        const deltas = computePlanDeltas(d, plan, planned.mainSet, d.type, profileTrainingPaces(store.profile).longRun);
         const deltaParts = [
           deltas.paceDeltaSecs !== null
             ? `pace ${deltas.paceDeltaSecs>0?"+":""}${secsTopace(Math.abs(deltas.paceDeltaSecs))}/km (${deltas.paceDeltaSecs>0?"slower":"faster"} than target ${deltas.targetPace})`

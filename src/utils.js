@@ -287,15 +287,27 @@ export function parseDistanceFromMainSet(mainSet) {
 
 /**
  * Compute signed deltas between a logged session and its week plan.
- * Returns { distDelta, plannedDist, paceDeltaSecs, targetPace } — values are null when data is absent.
+ * Target pace is session-type-aware:
+ *   - run_threshold / run_interval → weekPlan.weekGoals.targetPace
+ *   - run_long                     → longRunPace from profile
+ *   - run_easy                     → no pace comparison (paceDeltaSecs = null)
+ * Returns { distDelta, plannedDist, paceDeltaSecs, targetPace }.
  */
-export function computePlanDeltas(session, weekPlan, mainSet) {
+export function computePlanDeltas(session, weekPlan, mainSet, sessionType, longRunPace) {
   const actualDist = parseFloat(session?.distance || "");
   const plannedDist = parseDistanceFromMainSet(mainSet);
   const distDelta = (!isNaN(actualDist) && actualDist > 0 && plannedDist !== null)
     ? parseFloat((actualDist - plannedDist).toFixed(2)) : null;
 
-  const targetPace = weekPlan?.weekGoals?.targetPace || null;
+  const type = sessionType || session?.type;
+  let targetPace = null;
+  if (type === "run_threshold" || type === "run_interval") {
+    targetPace = weekPlan?.weekGoals?.targetPace || null;
+  } else if (type === "run_long") {
+    targetPace = longRunPace || null;
+  }
+  // run_easy: targetPace stays null — no meaningful pace target
+
   const actualPaceSecs = parsePace(session?.avgPace);
   const targetPaceSecs = parsePace(targetPace);
   const paceDeltaSecs = (actualPaceSecs !== null && targetPaceSecs !== null)
@@ -305,11 +317,35 @@ export function computePlanDeltas(session, weekPlan, mainSet) {
 }
 
 /**
+ * Derive threshold pace from a race pace string.
+ * Uses ~6.5% faster than race pace (Jack Daniels T-pace methodology).
+ * e.g. 5:15/km race pace → 4:55/km threshold
+ */
+export function deriveThresholdPace(racePaceStr) {
+  const secs = parsePace(racePaceStr);
+  if (!secs) return null;
+  return secsTopace(Math.round(secs * 0.935));
+}
+
+/**
+ * Derive long run pace from a race pace string.
+ * Uses ~7.5% slower than race pace (aerobic base zone).
+ * e.g. 5:15/km race pace → 5:39/km long run
+ */
+export function deriveLongRunPace(racePaceStr) {
+  const secs = parsePace(racePaceStr);
+  if (!secs) return null;
+  return secsTopace(Math.round(secs * 1.075));
+}
+
+/**
  * Compute projected race finish time.
  * Source priority:
- *   1. garminPredicted in profile — direct fitness signal from Garmin's algorithms
- *   2. Weighted average of recent logged runs (fallback when no predicted time set)
- * Requires a valid race goal + race pace in profile.
+ *   1. garminPredicted — only for standard goals (5km/10km/HM/Marathon) where
+ *      Garmin's prediction applies to the same race distance.
+ *   2. Weighted average of threshold/interval sessions (best race pace predictors).
+ *      Falls back to all run sessions when fewer than 2 quality sessions exist.
+ * Custom/Trail goals skip garminPredicted (it's a different-race estimate).
  */
 export function computeRaceProjection(sessions, profile) {
   const raceDist = RACE_DISTANCES[profile?.goal]
@@ -319,9 +355,7 @@ export function computeRaceProjection(sessions, profile) {
 
   const goalTimeSecs = Math.round(goalPaceSecs * raceDist);
 
-  // Priority 1: use Garmin predicted time — only for standard goals where the
-  // prediction applies to the same race distance. Custom/trail goals skip this
-  // because garminPredicted is typically a HM/Marathon estimate, not the custom race.
+  // Priority 1: Garmin predicted time (standard goals only)
   const isStandardGoal = !!RACE_DISTANCES[profile?.goal];
   if (isStandardGoal && profile?.garminPredicted) {
     const parts = profile.garminPredicted.split(":").map(Number);
@@ -337,18 +371,22 @@ export function computeRaceProjection(sessions, profile) {
         goalTime: secsToTime(goalTimeSecs),
         gapSecs,
         goalTimeSecs,
-        sampleSize: null, // from Garmin, not from logged runs
+        sampleSize: null,
         source: "garmin",
+        usingQualitySessions: false,
         pct: Math.min(100, Math.round((goalTimeSecs / predSecs) * 100)),
       };
     }
   }
 
-  // Priority 2: weighted average of recent logged runs
-  const runs = (sessions || [])
+  // Priority 2: weighted average of recent runs (quality sessions preferred)
+  const allRuns = (sessions || [])
     .filter(s => s.type?.startsWith("run") && parsePace(s.avgPace) !== null)
-    .sort((a, b) => new Date(b.date) - new Date(a.date))
-    .slice(0, 8);
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const qualityRuns = allRuns.filter(s => s.type === "run_threshold" || s.type === "run_interval");
+  const usingQualitySessions = qualityRuns.length >= 2;
+  const runs = usingQualitySessions ? qualityRuns.slice(0, 8) : allRuns.slice(0, 8);
 
   if (runs.length < 2) return null;
 
@@ -370,6 +408,7 @@ export function computeRaceProjection(sessions, profile) {
     goalTimeSecs,
     sampleSize: runs.length,
     source: "runs",
+    usingQualitySessions,
     pct: Math.min(100, Math.round((goalTimeSecs / projTimeSecs) * 100)),
   };
 }
