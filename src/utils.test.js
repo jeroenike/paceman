@@ -462,7 +462,7 @@ describe("computePlanDeltas", () => {
   const weekPlan = { weekGoals: { targetPace: "5:15" } };
 
   it("returns distDelta and paceDeltaSecs for a complete session", () => {
-    const session = { distance: "14.36", avgPace: "5:34" };
+    const session = { distance: "14.36", avgPace: "5:34", type: "run_threshold" };
     const result = computePlanDeltas(session, weekPlan, "12km at 5:15/km pace");
     expect(result.distDelta).toBe(2.36);
     expect(result.paceDeltaSecs).toBe(19); // 5:34 - 5:15 = 19s slower
@@ -471,7 +471,7 @@ describe("computePlanDeltas", () => {
   });
 
   it("returns null distDelta when mainSet has no parseable distance", () => {
-    const session = { distance: "14.36", avgPace: "5:34" };
+    const session = { distance: "14.36", avgPace: "5:34", type: "run_threshold" };
     const result = computePlanDeltas(session, weekPlan, "4x1km intervals");
     expect(result.distDelta).toBeNull();
     expect(result.paceDeltaSecs).toBe(19); // pace delta still computed
@@ -492,7 +492,7 @@ describe("computePlanDeltas", () => {
   });
 
   it("returns negative paceDeltaSecs when session is faster than target", () => {
-    const session = { distance: "10", avgPace: "5:00" };
+    const session = { distance: "10", avgPace: "5:00", type: "run_threshold" };
     const result = computePlanDeltas(session, weekPlan, "10km at 5:15");
     expect(result.paceDeltaSecs).toBe(-15); // 5:00 - 5:15 = -15s (faster)
     expect(result.distDelta).toBe(0);
