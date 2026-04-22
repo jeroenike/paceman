@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
   DAY_LABELS, SESSION_TYPES, SESSION_COLORS, SESSION_LABELS, RACE_DISTANCES,
-  parsePace, secsTopace, computeRacePace, computeGoalTime,
+  parsePace, secsTopace, computeRacePace, computeGoalTime, computeTrainingPaces,
   getWeekStart, getCurrentWeekStart, getPlannedDay, getAutoLink,
   getWeeksToRace, findLinkedSession, findLinkedSessions, sessionsForWeek, sessionInWeek,
   weekRunSessions, countRunsPlanned,
@@ -9,14 +9,48 @@ import {
   isDayAfterRace, isDayRaceDay, isWeekInPast,
   secsToTime, computePlanDeltas, computeRaceProjection,
 } from "./utils.js";
-import { DEV_SEED } from "./dev-seed.js";
+import { DEV_SEED, DEV_SEED_GREEN, DEV_SEED_ORANGE, DEV_SEED_RED } from "./dev-seed.js";
 
 const STORAGE_KEY = "paceman_v4";
 const RACE_GOALS = ["5km","10km","15km","Half Marathon","Marathon","Trail Run","Custom..."];
 
+/** Effective race distance in km — handles standard goals and custom distance entry. */
+function profileRaceDist(p) {
+  if (p.goal === "Custom..." && p.goalCustomDist) return parseFloat(p.goalCustomDist) || null;
+  return RACE_DISTANCES[p.goal] || null;
+}
+
+/** Compute effective threshold + long run paces for a profile.
+ *
+ * Standard goals (known distance): garminPredicted → goalTime → racePace.
+ *   garminPredicted is a Garmin race predictor value for the same race type,
+ *   so it's a valid fitness signal. We derive a per-km pace: time ÷ distance.
+ *
+ * Custom goals: always use racePace directly.
+ *   garminPredicted is typically for a different race (e.g. HM), so applying it
+ *   to a 53km ultra would produce nonsense paces. racePace is the user's explicit
+ *   target pace for their actual race.
+ */
+function profileTrainingPaces(p) {
+  const isCustom = p.goal === "Custom..." || p.goal === "Trail Run";
+  if (isCustom) {
+    return computeTrainingPaces(parsePace(p.racePace));
+  }
+  const dist = profileRaceDist(p);
+  const src = p.garminPredicted || p.goalTime;
+  const fitSecs = (dist && src) ? (() => {
+    const parts = src.split(":").map(Number);
+    let timeSecs;
+    if (parts.length === 3) timeSecs = parts[0]*3600 + parts[1]*60 + (parts[2]||0);
+    else if (parts.length === 2) timeSecs = parts[0]*60 + (parts[1]||0);
+    return timeSecs ? timeSecs / dist : null;
+  })() : null;
+  return computeTrainingPaces(fitSecs || parsePace(p.racePace));
+}
+
 const defaultProfile = {
-  name:"", goal:"", goalCustom:"", goalDate:"", goalTime:"", thresholdPace:"", racePace:"",
-  longRunPace:"", easyHR:"", experience:"", injuries:[],
+  name:"", goal:"", goalCustom:"", goalCustomDist:"", goalDate:"", goalTime:"", garminPredicted:"", racePace:"",
+  easyHR:"", experience:"", injuries:[],
   schedule:{ Mon:"rest", Tue:"run_threshold", Wed:"crossfit", Thu:"run_easy", Fri:"crossfit", Sat:"crossfit", Sun:"run_long" },
 };
 
@@ -29,7 +63,16 @@ async function callClaude(system, user) {
     body:JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1500, system, messages:[{role:"user",content:user}] }),
   });
   const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
+  if (data.error) {
+    const type = data.error.type || "";
+    if (type === "overloaded_error" || data.error.message?.toLowerCase().includes("overloaded")) {
+      throw new Error("The AI service is busy right now — please try again in a moment.");
+    }
+    if (type === "rate_limit_error") {
+      throw new Error("Rate limit reached — please wait a few seconds and try again.");
+    }
+    throw new Error(data.error.message || "AI request failed");
+  }
   return data.content?.[0]?.text || "";
 }
 
@@ -264,7 +307,6 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
   const raceWeekStart = raceDate ? getWeekStart(new Date(raceDate + "T00:00:00")) : null;
   if (raceDate) { const rd = new Date(raceDate + "T00:00:00"); to.setTime(rd.getTime()); }
   for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 7)) weeks.push(getWeekStart(d));
-  // Always include race week even if race is beyond default range
   if (raceWeekStart && !weeks.includes(raceWeekStart)) weeks.push(raceWeekStart);
 
   useEffect(() => {
@@ -273,59 +315,68 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
     }
   }, [activeWeekStart]);
 
-  return (
-    <div ref={stripRef} style={{ display:"flex",gap:6,overflowX:"auto",padding:"4px 0 10px",scrollbarWidth:"none",WebkitOverflowScrolling:"touch" }}>
-      {weeks.map(ws=>{
-        const plan = (weekPlans||[]).find(p=>p.weekStart===ws);
-        const isActive = ws===activeWeekStart;
-        const label = new Date(ws+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"});
-        // One dot per planned run day; filled = session found by date (or fallback link)
-        // When no plan exists, fall back to one filled dot per logged run session in this week
-        const wsDate = new Date(ws+"T00:00:00");
-        const plannedDays = plan
-          ? DAY_LABELS.filter(d=>{ const t=plan.weekGoals?.daySessions?.[d]?.type; return t&&t.startsWith("run"); })
-              .map(d=>{
-                const idx = DAY_LABELS.indexOf(d);
-                const dd = new Date(wsDate); dd.setDate(wsDate.getDate()+idx);
-                const dayStr = `${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,"0")}-${String(dd.getDate()).padStart(2,"0")}`;
-                const linked = (sessions||[]).some(s=>
-                  s.date===dayStr || (s.plannedDay===d&&s.plannedWeekStart===ws)
-                );
-                return { day:d, type:plan.weekGoals.daySessions[d].type, linked };
+  function renderChip(ws) {
+    const plan = (weekPlans||[]).find(p=>p.weekStart===ws);
+    const isActive = ws===activeWeekStart;
+    const label = new Date(ws+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short"});
+    const wsDate = new Date(ws+"T00:00:00");
+    const plannedDays = plan
+      ? DAY_LABELS.filter(d=>{ const t=plan.weekGoals?.daySessions?.[d]?.type; return t&&t.startsWith("run"); })
+          .map(d=>{
+            const idx = DAY_LABELS.indexOf(d);
+            const dd = new Date(wsDate); dd.setDate(wsDate.getDate()+idx);
+            const dayStr = `${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,"0")}-${String(dd.getDate()).padStart(2,"0")}`;
+            const linked = (sessions||[]).some(s=>
+              s.date===dayStr || (s.plannedDay===d&&s.plannedWeekStart===ws)
+            );
+            return { day:d, type:plan.weekGoals.daySessions[d].type, linked };
+          })
+      : [];
+    const unplannedRuns = !plan
+      ? (sessions||[]).filter(s => sessionInWeek(s, ws) && s.type?.startsWith("run") && parseFloat(s.distance||"") > 0)
+      : [];
+    const isCurrentWeek = ws===getCurrentWeekStart();
+    const isRaceWeek = raceWeekStart && ws===raceWeekStart;
+    const chipBorder = isActive?"#1B6FE8":isRaceWeek?"#e8a020":isCurrentWeek?"#93b8f5":"#eee";
+    const chipBg = isActive?"#f0f6ff":isRaceWeek?"#fff8ed":isCurrentWeek?"#f5f8ff":"#fff";
+    const labelColor = isActive?"#1B6FE8":isRaceWeek?"#c07000":isCurrentWeek?"#4a85d4":"#888";
+    return (
+      <button key={ws} ref={isActive?activeRef:null} onClick={()=>onSelect(ws)}
+        style={{ flexShrink:0,padding:"5px 9px",borderRadius:8,border:`1.5px solid ${chipBorder}`,background:chipBg,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2 }}>
+        {isRaceWeek&&<span style={{ fontSize:12,lineHeight:1 }}>🏁</span>}
+        <span style={{ fontSize:11,fontWeight:isActive||isRaceWeek?700:isCurrentWeek?600:400,color:labelColor,whiteSpace:"nowrap" }}>{label}</span>
+        {isRaceWeek&&!isActive&&<span style={{ fontSize:9,fontWeight:700,color:"#c07000",letterSpacing:"0.04em",lineHeight:1 }}>RACE</span>}
+        {isCurrentWeek&&!isActive&&!isRaceWeek&&<span style={{ fontSize:9,fontWeight:700,color:"#4a85d4",letterSpacing:"0.04em",lineHeight:1 }}>NOW</span>}
+        <div style={{ display:"flex",gap:2,alignItems:"center" }}>
+          {plannedDays.length>0
+            ? plannedDays.map(({day,type,linked})=>{
+                const c=SESSION_COLORS[type]||"#888780";
+                return <div key={day} style={{ width:6,height:6,borderRadius:"50%",background:linked?c:"transparent",border:`1.5px solid ${c}` }}/>;
               })
-          : [];
-        const unplannedRuns = !plan
-          ? (sessions||[]).filter(s => sessionInWeek(s, ws) && s.type?.startsWith("run") && parseFloat(s.distance||"") > 0)
-          : [];
-        const isCurrentWeek = ws===getCurrentWeekStart();
-        const isRaceWeek = raceWeekStart && ws===raceWeekStart;
-        const chipBorder = isActive?"#1B6FE8":isRaceWeek?"#e8a020":isCurrentWeek?"#93b8f5":"#eee";
-        const chipBg = isActive?"#f0f6ff":isRaceWeek?"#fff8ed":isCurrentWeek?"#f5f8ff":"#fff";
-        const labelColor = isActive?"#1B6FE8":isRaceWeek?"#c07000":isCurrentWeek?"#4a85d4":"#888";
-        return (
-          <button key={ws} ref={isActive?activeRef:null} onClick={()=>onSelect(ws)}
-            style={{ flexShrink:0,padding:"5px 9px",borderRadius:8,border:`1.5px solid ${chipBorder}`,background:chipBg,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2 }}>
-            {isRaceWeek&&<span style={{ fontSize:12,lineHeight:1 }}>🏁</span>}
-            <span style={{ fontSize:11,fontWeight:isActive||isRaceWeek?700:isCurrentWeek?600:400,color:labelColor,whiteSpace:"nowrap" }}>{label}</span>
-            {isRaceWeek&&!isActive&&<span style={{ fontSize:9,fontWeight:700,color:"#c07000",letterSpacing:"0.04em",lineHeight:1 }}>RACE</span>}
-            {isCurrentWeek&&!isActive&&!isRaceWeek&&<span style={{ fontSize:9,fontWeight:700,color:"#4a85d4",letterSpacing:"0.04em",lineHeight:1 }}>NOW</span>}
-            <div style={{ display:"flex",gap:2,alignItems:"center" }}>
-              {plannedDays.length>0
-                ? plannedDays.map(({day,type,linked})=>{
-                    const c=SESSION_COLORS[type]||"#888780";
-                    return <div key={day} style={{ width:6,height:6,borderRadius:"50%",background:linked?c:"transparent",border:`1.5px solid ${c}` }}/>;
-                  })
-                : unplannedRuns.length>0
-                  ? unplannedRuns.map((s,i)=>{
-                      const c=SESSION_COLORS[s.type]||"#0F6E56";
-                      return <div key={i} style={{ width:6,height:6,borderRadius:"50%",background:c,border:`1.5px solid ${c}` }}/>;
-                    })
-                  : <div style={{ width:6,height:6,borderRadius:"50%",background:"transparent",border:"1.5px solid #ddd" }}/>
-              }
-            </div>
-          </button>
-        );
-      })}
+            : unplannedRuns.length>0
+              ? unplannedRuns.map((s,i)=>{
+                  const c=SESSION_COLORS[s.type]||"#0F6E56";
+                  return <div key={i} style={{ width:6,height:6,borderRadius:"50%",background:c,border:`1.5px solid ${c}` }}/>;
+                })
+              : <div style={{ width:6,height:6,borderRadius:"50%",background:"transparent",border:"1.5px solid #ddd" }}/>
+          }
+        </div>
+      </button>
+    );
+  }
+
+  const scrollableWeeks = raceWeekStart ? weeks.filter(ws => ws !== raceWeekStart) : weeks;
+
+  return (
+    <div style={{ display:"flex",alignItems:"stretch",gap:0,padding:"4px 0 10px" }}>
+      <div ref={stripRef} style={{ flex:1,display:"flex",gap:6,overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch" }}>
+        {scrollableWeeks.map(ws => renderChip(ws))}
+      </div>
+      {raceWeekStart&&(
+        <div style={{ flexShrink:0,borderLeft:"2px solid #f0f0ec",paddingLeft:6,display:"flex",alignItems:"center" }}>
+          {renderChip(raceWeekStart)}
+        </div>
+      )}
     </div>
   );
 }
@@ -419,48 +470,68 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
   return (
     <div style={{ padding:"0 16px 24px",overflowY:"auto",flex:1 }}>
       {/* Header */}
-      <div style={{ padding:"20px 0 10px",borderBottom:"1px solid #f0f0ec",marginBottom:10 }}>
-        <div style={{ fontSize:11,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:2 }}>Training Plan</div>
-        <div style={{ fontSize:24,fontWeight:800,color:"#1a1a1a" }}>{store.profile.name?`${store.profile.name}'s Plan`:"Training Plan"}</div>
-        {goalLabel&&(
-          <div style={{ fontSize:13,color:"#888",marginTop:3,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap" }}>
-            <span>{goalLabel} · {store.profile.goalTime}</span>
-            {daysToRace!==null&&daysToRace>0&&<span style={{ fontSize:11,padding:"2px 8px",borderRadius:6,background:"#f0f6ff",color:"#1B6FE8",fontWeight:700 }}>{daysToRace}d to go</span>}
-            {daysToRace===0&&<span style={{ fontSize:11,padding:"2px 8px",borderRadius:6,background:"#fff8e0",color:"#b07000",fontWeight:700 }}>Race day!</span>}
+      <div style={{ padding:"18px 0 10px",marginBottom:10 }}>
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8 }}>
+          <div style={{ fontSize:22,fontWeight:800,color:"#1a1a1a",lineHeight:1.2 }}>
+            {store.profile.name?`${store.profile.name}'s Plan`:"Training Plan"}
           </div>
+          {daysToRace!==null&&daysToRace>0&&(
+            <span style={{ flexShrink:0,fontSize:11,padding:"3px 9px",borderRadius:6,background:"#f0f6ff",color:"#1B6FE8",fontWeight:700,marginTop:3 }}>{daysToRace}d to go</span>
+          )}
+          {daysToRace===0&&(
+            <span style={{ flexShrink:0,fontSize:11,padding:"3px 9px",borderRadius:6,background:"#fff8e0",color:"#b07000",fontWeight:700,marginTop:3 }}>Race day!</span>
+          )}
+        </div>
+        {goalLabel&&(
+          <div style={{ fontSize:13,color:"#aaa",marginTop:3 }}>{goalLabel}{store.profile.goalTime?` · ${store.profile.goalTime}`:""}</div>
         )}
 
-        {/* Race projection gauge */}
+        {/* Race projection — compact gauge */}
         {(()=>{
           const proj = computeRaceProjection(store.sessions, store.profile);
           if (!proj) return null;
-          const barColor = proj.gapSecs <= 0 ? "#0F6E56" : proj.gapSecs < proj.goalTimeSecs * 0.10 ? "#b07000" : "#c00";
-          const gapLabel = proj.gapSecs === 0 ? "On target ✓"
-            : proj.gapSecs > 0 ? `${secsToTime(Math.abs(proj.gapSecs))} behind goal`
-            : `${secsToTime(Math.abs(proj.gapSecs))} ahead of goal`;
+          // Smart color: gap% × weeks remaining
+          const weeksLeft = store.profile.goalDate
+            ? Math.max(0, Math.ceil((new Date(store.profile.goalDate)-new Date())/(1000*60*60*24*7)))
+            : null;
+          const gapPct = proj.gapSecs > 0 ? proj.gapSecs / proj.goalTimeSecs : 0;
+          const weeklyEffortNeeded = weeksLeft > 0 ? gapPct / weeksLeft : gapPct;
+          let barColor, feasibility;
+          if (proj.gapSecs <= 0) {
+            barColor = "#0F6E56";
+            feasibility = proj.gapSecs < 0 ? "Ahead of goal" : "On target";
+          } else if (weeklyEffortNeeded > 0.015 || (weeksLeft !== null && weeksLeft <= 3 && gapPct > 0.03)) {
+            barColor = "#c00";
+            feasibility = weeksLeft !== null && weeksLeft <= 2 ? "Not enough time" : "High risk";
+          } else if (weeklyEffortNeeded > 0.007 || (weeksLeft !== null && weeksLeft <= 6 && gapPct > 0.01)) {
+            barColor = "#b07000";
+            feasibility = "Achievable with effort";
+          } else {
+            barColor = "#0F6E56";
+            feasibility = "On track";
+          }
+          const gapLabel = proj.gapSecs === 0 ? "On target" : proj.gapSecs > 0
+            ? `${secsToTime(Math.abs(proj.gapSecs))} behind` : `${secsToTime(Math.abs(proj.gapSecs))} ahead`;
           return (
-            <div style={{ marginTop:10,padding:"10px 12px",borderRadius:10,
-              background:proj.gapSecs<=0?"#f4fbf7":proj.gapSecs<proj.goalTimeSecs*0.05?"#fffbf0":"#fff8f8",
-              border:`1px solid ${barColor}33` }}>
-              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6 }}>
-                <span style={{ fontSize:11,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em" }}>
-                  Race projection · {proj.sampleSize} run{proj.sampleSize!==1?"s":""}
-                </span>
-                <span style={{ fontSize:11,fontWeight:700,color:barColor }}>{gapLabel}</span>
-              </div>
-              <div style={{ display:"flex",gap:16,alignItems:"flex-end",marginBottom:8 }}>
-                <div>
-                  <div style={{ fontSize:10,color:"#aaa",marginBottom:1 }}>Projected</div>
-                  <div style={{ fontSize:20,fontWeight:800,color:barColor,lineHeight:1 }}>{proj.projTime}</div>
+            <div style={{ marginTop:10,paddingTop:10,borderTop:"1px solid #f0f0ec" }}>
+              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5 }}>
+                <div style={{ display:"flex",alignItems:"baseline",gap:5 }}>
+                  <span style={{ fontSize:18,fontWeight:800,color:barColor,lineHeight:1 }}>{proj.projTime}</span>
+                  <span style={{ fontSize:12,color:"#aaa" }}>projected</span>
                 </div>
-                <div style={{ fontSize:14,color:"#ccc",paddingBottom:2 }}>vs</div>
-                <div>
-                  <div style={{ fontSize:10,color:"#aaa",marginBottom:1 }}>Goal</div>
-                  <div style={{ fontSize:20,fontWeight:800,color:"#1a1a1a",lineHeight:1 }}>{proj.goalTime}</div>
+                <div style={{ display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2 }}>
+                  <span style={{ fontSize:11,fontWeight:700,color:barColor,padding:"2px 8px",borderRadius:5,background:barColor+"18" }}>
+                    {gapLabel}
+                  </span>
+                  <span style={{ fontSize:10,color:barColor,fontWeight:600 }}>{feasibility}</span>
                 </div>
               </div>
-              <div style={{ height:5,borderRadius:4,background:"#f0f0ec",overflow:"hidden" }}>
-                <div style={{ height:"100%",borderRadius:4,background:barColor,width:`${proj.pct}%`,transition:"width 0.4s" }}/>
+              <div style={{ height:6,borderRadius:3,background:"#f0f0ec",overflow:"hidden" }}>
+                <div style={{ height:"100%",borderRadius:3,background:barColor,width:`${proj.pct}%`,transition:"width 0.4s" }}/>
+              </div>
+              <div style={{ display:"flex",justifyContent:"space-between",marginTop:4,fontSize:11,color:"#aaa" }}>
+                <span>{proj.source==="garmin" ? "Garmin predicted" : `${proj.sampleSize} run${proj.sampleSize!==1?"s":""}`}{weeksLeft!==null&&weeksLeft>0?` · ${weeksLeft}w left`:""}</span>
+                <span>goal {proj.goalTime}</span>
               </div>
             </div>
           );
@@ -1075,7 +1146,7 @@ function ProgressScreen({ store }) {
   const goalTime = p.goalTime || null;
   const goalDate = p.goalDate || null;
   const racePace = p.racePace || null;           // target race pace e.g. "5:15"
-  const thresholdPace = p.thresholdPace || null; // threshold e.g. "5:00"
+  const { threshold: thresholdPace } = profileTrainingPaces(p);
   const easyHR = p.easyHR || null;               // easy HR range e.g. "130-140"
   const daysToRace = goalDate ? Math.ceil((new Date(goalDate)-new Date())/(1000*60*60*24)) : null;
 
@@ -1477,6 +1548,12 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
     const auto = computeRacePace(store.profile.goal, store.profile.goalTime);
     return !!(store.profile.racePace && store.profile.racePace !== auto);
   });
+  // Training paces: derived from Garmin predicted time (current fitness) or goal time (fallback)
+  const fitnessPaceSource = draft.garminPredicted ? "predicted" : "goal";
+  const fitnessPaceSecs = parsePace(
+    computeRacePace(draft.goal, draft.garminPredicted || draft.goalTime)
+  );
+  const autoTrainingPaces = computeTrainingPaces(fitnessPaceSecs);
 
   return (
     <div style={{ padding:"0 16px 24px",overflowY:"auto",flex:1 }}>
@@ -1490,13 +1567,28 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
           <SectionLabel>Race goal</SectionLabel>
           <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:draft.goal==="Custom..."?10:0 }}>
             {RACE_GOALS.map(g=>(
-              <button key={g} onClick={()=>set("goal",g)}
+              <button key={g} onClick={()=>{
+                set("goal",g);
+                // Clear garminPredicted when switching to a goal it doesn't apply to
+                if (!["5km","10km","Half Marathon","Marathon"].includes(g)) set("garminPredicted","");
+              }}
                 style={{ padding:"10px 6px",borderRadius:8,border:`1.5px solid ${draft.goal===g?"#1B6FE8":"#eee"}`,background:draft.goal===g?"#f0f6ff":"#fff",color:draft.goal===g?"#1B6FE8":"#1a1a1a",fontSize:13,fontWeight:draft.goal===g?700:400,cursor:"pointer" }}>
                 {g}
               </button>
             ))}
           </div>
-          {draft.goal==="Custom..."&&<Field label="Custom goal" value={draft.goalCustom} onChange={v=>set("goalCustom",v)} placeholder="e.g. 30km trail race"/>}
+          {draft.goal==="Custom..."&&(
+            <div style={{ display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"end" }}>
+              <Field label="Custom goal" value={draft.goalCustom} onChange={v=>set("goalCustom",v)} placeholder="e.g. 6 Foot Track"/>
+              <div>
+                <label style={{ fontSize:11,fontWeight:700,color:"#888",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>Distance (km)</label>
+                <input type="number" min="1" max="500" step="0.1"
+                  value={draft.goalCustomDist||""} onChange={e=>set("goalCustomDist",e.target.value)}
+                  placeholder="53"
+                  style={{ width:72,padding:"11px 10px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
+              </div>
+            </div>
+          )}
         </div>
         <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
           {/* Goal time — editable when time is source; read-only (derived from pace) when pace is source */}
@@ -1515,30 +1607,56 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
           </div>
           <Field label="Race date" value={draft.goalDate} onChange={v=>set("goalDate",v)} type="date"/>
         </div>
-        <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
-          <Field label="Threshold pace" value={draft.thresholdPace} onChange={v=>set("thresholdPace",v)} placeholder="5:00"/>
-          <div>
-            <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>Race pace</label>
-            {!racePaceOverride && autoRacePace ? (
-              <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#f8f8f6" }}>
-                <span style={{ fontSize:15,color:"#1a1a1a",fontWeight:600 }}>{autoRacePace}/km</span>
-                <button onClick={()=>{ set("racePace",autoRacePace); setRacePaceOverride(true); }}
-                  style={{ fontSize:11,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>Edit</button>
-              </div>
-            ) : (
-              <div>
-                <input value={draft.racePace}
-                  onChange={e=>{ set("racePace",e.target.value); const gt=computeGoalTime(draft.goal,e.target.value); if(gt) set("goalTime",gt); }}
-                  placeholder={autoRacePace||"5:15"} inputMode="text"
-                  style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #1B6FE855",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
-                {autoRacePace && <button onClick={()=>{ set("racePace",""); setRacePaceOverride(false); }}
-                  style={{ fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",marginTop:4,padding:0 }}>← Auto ({autoRacePace}/km)</button>}
-              </div>
-            )}
-          </div>
-          <Field label="Long run pace" value={draft.longRunPace} onChange={v=>set("longRunPace",v)} placeholder="6:20"/>
-          <Field label="Easy HR (bpm)" value={draft.easyHR} onChange={v=>set("easyHR",v)} placeholder="130-140"/>
+        <div>
+          <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>Race pace</label>
+          {!racePaceOverride && autoRacePace ? (
+            <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#f8f8f6" }}>
+              <span style={{ fontSize:15,color:"#1a1a1a",fontWeight:600 }}>{autoRacePace}/km</span>
+              <button onClick={()=>{ set("racePace",autoRacePace); setRacePaceOverride(true); }}
+                style={{ fontSize:11,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>Edit</button>
+            </div>
+          ) : (
+            <div>
+              <input value={draft.racePace}
+                onChange={e=>{ set("racePace",e.target.value); const gt=computeGoalTime(draft.goal,e.target.value); if(gt) set("goalTime",gt); }}
+                placeholder={autoRacePace||"5:15"} inputMode="text"
+                style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #1B6FE855",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
+              {autoRacePace && <button onClick={()=>{ set("racePace",""); setRacePaceOverride(false); }}
+                style={{ fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",marginTop:4,padding:0 }}>← Auto ({autoRacePace}/km)</button>}
+            </div>
+          )}
         </div>
+        {["5km","10km","Half Marathon","Marathon"].includes(draft.goal) && (
+          <div>
+            <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>
+              Garmin {draft.goal} prediction <span style={{ fontWeight:400,color:"#bbb",textTransform:"none" }}>optional</span>
+            </label>
+            <input value={draft.garminPredicted} onChange={e=>set("garminPredicted",e.target.value)}
+              placeholder="e.g. 1:56:30 — sets training paces from current fitness"
+              inputMode="text"
+              style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
+            <div style={{ display:"flex",gap:8,marginTop:8 }}>
+              <div style={{ flex:1,padding:"8px 10px",borderRadius:8,background:"#f8f8f6",border:"1px solid #eee" }}>
+                <div style={{ fontSize:10,color:"#aaa",marginBottom:2 }}>Threshold</div>
+                <div style={{ fontSize:14,fontWeight:700,color:autoTrainingPaces.threshold?"#1B6FE8":"#ccc" }}>
+                  {autoTrainingPaces.threshold ? `${autoTrainingPaces.threshold}/km` : "—"}
+                </div>
+              </div>
+              <div style={{ flex:1,padding:"8px 10px",borderRadius:8,background:"#f8f8f6",border:"1px solid #eee" }}>
+                <div style={{ fontSize:10,color:"#aaa",marginBottom:2 }}>Long run</div>
+                <div style={{ fontSize:14,fontWeight:700,color:autoTrainingPaces.longRun?"#3B6D11":"#ccc" }}>
+                  {autoTrainingPaces.longRun ? `${autoTrainingPaces.longRun}/km` : "—"}
+                </div>
+              </div>
+              <div style={{ flex:1,padding:"8px 10px",borderRadius:8,background:"#f8f8f6",border:"1px solid #eee",display:"flex",alignItems:"center",justifyContent:"center" }}>
+                <div style={{ fontSize:10,color:"#aaa",textAlign:"center",lineHeight:1.3 }}>
+                  Based on {fitnessPaceSource === "predicted" ? "predicted time" : "goal pace"}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        <Field label="Easy HR (bpm)" value={draft.easyHR} onChange={v=>set("easyHR",v)} placeholder="130-140"/>
         <div>
           <SectionLabel>Experience</SectionLabel>
           <select value={draft.experience} onChange={e=>set("experience",e.target.value)}
@@ -1621,17 +1739,24 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
             <div style={{ fontSize:11,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10 }}>
               Dev tools · ?dev mode
             </div>
-            <button onClick={()=>{
-              if(window.confirm("Load sample data? This will overwrite your current profile, sessions and plans.")) {
-                persist(DEV_SEED);
-                onSaved();
-              }
-            }}
-              style={{ width:"100%",padding:12,borderRadius:10,background:"#f5f5f5",color:"#555",border:"1px solid #ddd",fontSize:14,fontWeight:600,cursor:"pointer" }}>
-              Load sample data
-            </button>
-            <div style={{ fontSize:11,color:"#bbb",marginTop:6,lineHeight:1.5 }}>
-              Loads 8 realistic training sessions + 3 week plans to test the race projection gauge and plan comparison features.
+            <div style={{ display:"flex",flexDirection:"column",gap:6 }}>
+              {[
+                { seed:DEV_SEED_GREEN,  label:"🟢 Green — Alex (on track / ahead)",       desc:"Projected 1:49, 1 min ahead of goal" },
+                { seed:DEV_SEED_ORANGE, label:"🟡 Orange — Sam (achievable with effort)", desc:"Projected 1:56, 5:34 behind with 6 weeks left" },
+                { seed:DEV_SEED_RED,    label:"🔴 Red — Jordan (high risk)",              desc:"Projected 2:12, 21+ min behind — gap too large" },
+              ].map(({seed,label,desc})=>(
+                <div key={label}>
+                  <button onClick={()=>{
+                    if(window.confirm(`Load "${label}"? This will overwrite your current profile, sessions and plans.`)) {
+                      persist(seed); onSaved();
+                    }
+                  }}
+                    style={{ width:"100%",padding:"10px 12px",borderRadius:8,background:"#f5f5f5",color:"#444",border:"1px solid #ddd",fontSize:13,fontWeight:600,cursor:"pointer",textAlign:"left" }}>
+                    {label}
+                  </button>
+                  <div style={{ fontSize:11,color:"#bbb",marginTop:2,paddingLeft:2 }}>{desc}</div>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -1774,7 +1899,7 @@ export default function App() {
         return `\nPlanned for ${d.plannedDay}: type=${planned.type}, mainSet="${planned.mainSet||"none"}", targetPace=${plan.weekGoals.targetPace||"n/a"}${deltaParts?`\nDeltas: ${deltaParts}`:""}`;
       })();
       const r = await callClaude(SYSTEM,
-        `Analyze session — ${goalLabel} in ${p.goalTime} (threshold: ${p.thresholdPace}/km):
+        `Analyze session — ${goalLabel} in ${p.goalTime} (threshold: ${profileTrainingPaces(p).threshold}/km):
 Type: ${d.type} | Date: ${d.date} | Location: ${d.location||"unknown"}
 Distance: ${d.distance||"unknown"}km | Elevation: ${d.elevation||"unknown"}m
 Pace: ${d.avgPace}/km | Avg HR: ${d.avgHR} | Max HR: ${d.maxHR} | Cadence: ${d.cadence} spm | TE: ${d.te} | RPE: ${d.rpe}/10
@@ -1831,9 +1956,9 @@ SCORE_JSON`);
 ${periodCtx}
 ${prevWeekSummary ? `\n${prevWeekSummary}\n` : ""}
 Athlete profile:
-- Goal: ${goalLabel} in ${p.goalTime}${p.goalDate?` on ${p.goalDate}`:""}
+- Goal: ${goalLabel}${profileRaceDist(p) ? ` (${profileRaceDist(p)}km)` : ""} in ${p.goalTime}${p.goalDate?` on ${p.goalDate}`:""}
 - Level: ${p.experience}
-- Threshold pace: ${p.thresholdPace}/km | Race pace: ${p.racePace}/km | Long run pace: ${p.longRunPace}/km | Easy HR: ${p.easyHR} bpm
+- Threshold pace: ${profileTrainingPaces(p).threshold}/km | Race pace: ${p.racePace}/km | Long run pace: ${profileTrainingPaces(p).longRun}/km | Easy HR: ${p.easyHR} bpm${p.garminPredicted ? ` (training paces from Garmin predicted ${p.garminPredicted})` : ""}
 - Schedule (FIXED — use exactly these session types in daySessions): ${JSON.stringify(effectiveSchedule)}
 - Injuries: ${p.injuries.join(", ")||"none"}
 
@@ -1908,7 +2033,7 @@ Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.
         "You are an elite running coach AI. Output valid JSON only — no markdown, no prose.",
         `Generate a single training session for ${day}, week starting ${weekStart}.
 Session type: ${SESSION_LABELS[newType] || newType} (${newType})
-Athlete: ${goalLabel} in ${p.goalTime} | Threshold: ${p.thresholdPace}/km | Race pace: ${p.racePace}/km | Long run pace: ${p.longRunPace}/km | Easy HR: ${p.easyHR} bpm | Level: ${p.experience}
+Athlete: ${goalLabel} in ${p.goalTime} | Threshold: ${profileTrainingPaces(p).threshold}/km | Race pace: ${p.racePace}/km | Long run pace: ${profileTrainingPaces(p).longRun}/km | Easy HR: ${p.easyHR} bpm | Level: ${p.experience}${p.garminPredicted ? ` | Current fitness: ${p.garminPredicted}` : ""}
 Week context: ${weekCtx}
 Injuries: ${(p.injuries || []).join(", ") || "none"}
 
@@ -1995,10 +2120,24 @@ DAY_JSON`
       for (let i = 0; i < weeks.length; i++) {
         setLoadingMsg(`Generating week ${i+1} of ${totalWeeks}…`);
         const prevPlan = i > 0 ? allPlans.find(p=>p.weekStart===weeks[i-1]) : null;
-        const weekGoals = await buildWeekPlanGoals(weeks[i], { prevWeekPlan:prevPlan, weekNumber:i+1, totalWeeks });
+        // Retry once on transient overload errors
+        let weekGoals;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            weekGoals = await buildWeekPlanGoals(weeks[i], { prevWeekPlan:prevPlan, weekNumber:i+1, totalWeeks });
+            break;
+          } catch(e) {
+            if (attempt === 0 && e.message.includes("busy")) {
+              setLoadingMsg(`Week ${i+1} — API busy, retrying…`);
+              await new Promise(r => setTimeout(r, 3000));
+            } else { throw e; }
+          }
+        }
         const newPlan = { weekGoals, weekStart:weeks[i], generated:new Date().toISOString() };
         allPlans = [...allPlans.filter(p=>p.weekStart!==weeks[i]), newPlan].sort((a,b)=>a.weekStart.localeCompare(b.weekStart));
         persist({ weekPlans:allPlans });
+        // Brief pause between weeks to avoid rate limiting
+        if (i < weeks.length - 1) await new Promise(r => setTimeout(r, 500));
       }
     } catch(e) { setError(e.message); }
     finally { setLoading(false); setLoadingMsg(""); }
@@ -2013,7 +2152,7 @@ DAY_JSON`
       const dayGoal = store.weekPlan?.weekGoals?.dayGoals?.[day];
       const r = await callClaude(SYSTEM,
         `Complete session plan: ${SESSION_LABELS[type]} on ${day}
-Athlete: ${goalLabel} in ${p.goalTime} | Threshold ${p.thresholdPace}/km | Easy HR ${p.easyHR} bpm | ${p.experience}
+Athlete: ${goalLabel} in ${p.goalTime} | Threshold ${profileTrainingPaces(p).threshold}/km | Easy HR ${p.easyHR} bpm | ${p.experience}
 Injuries: ${p.injuries.join(", ")||"none"}
 ${dayGoal?`Week goal for this session: ${dayGoal}`:""}
 Recent load: ${(store.sessions||[]).slice(-2).map(s=>`${s.type} TE:${s.te}`).join(", ")||"unknown"}
