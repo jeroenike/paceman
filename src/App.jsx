@@ -1546,7 +1546,7 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
         </div>
         <div>
           <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>
-            Garmin predicted time <span style={{ fontWeight:400,color:"#bbb",fontSize:10 }}>optional</span>
+            Garmin {["5km","10km","15km","Half Marathon","Marathon"].includes(draft.goal)?draft.goal+" ":""}predicted time <span style={{ fontWeight:400,color:"#bbb",fontSize:10 }}>optional</span>
           </label>
           <input value={draft.garminPredictedTime||""} onChange={e=>set("garminPredictedTime",e.target.value)}
             placeholder="e.g. 1:56:30 — sets training paces from current fitness"
