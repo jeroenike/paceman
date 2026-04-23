@@ -8,7 +8,6 @@ import {
   computeAutoScore, bulkDeleteSessions as utilBulkDelete,
   isDayAfterRace, isDayRaceDay, isWeekInPast,
   secsToTime, computePlanDeltas, computeRaceProjection,
-  deriveThresholdPace, deriveLongRunPace,
 } from "./utils.js";
 import { DEV_SEED, DEV_SEED_GREEN, DEV_SEED_ORANGE, DEV_SEED_RED } from "./dev-seed.js";
 
@@ -456,11 +455,8 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
   const hasPlan = !!activePlan;
   const isPastWeek = activeWeekStart < getCurrentWeekStart();
 
-  // Training paces: prefer Garmin-predicted time (current fitness) over goal race pace
   const p = store.profile;
-  const trainingBasePace = p.garminPredictedTime
-    ? computeRacePace(p.goal, p.garminPredictedTime) : p.racePace;
-  const effectiveLongRunPace = p.longRunPace || deriveLongRunPace(trainingBasePace);
+  const effectiveLongRunPace = profileTrainingPaces(p).longRun;
 
   // Week date range label
   const weekStartDate = new Date(activeWeekStart+"T00:00:00");
@@ -1668,40 +1664,6 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
             </div>
           </div>
         )}
-        <Field label="Easy HR (bpm)" value={draft.easyHR} onChange={v=>set("easyHR",v)} placeholder="130-140"/>
-        <div>
-          <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>
-            Garmin predicted time <span style={{ fontWeight:400,color:"#bbb",fontSize:10 }}>optional</span>
-          </label>
-          <input value={draft.garminPredictedTime||""} onChange={e=>set("garminPredictedTime",e.target.value)}
-            placeholder="e.g. 1:56:30 — sets training paces from current fitness"
-            inputMode="text"
-            style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
-          {(()=>{
-            const base = draft.garminPredictedTime
-              ? computeRacePace(draft.goal, draft.garminPredictedTime)
-              : (racePaceOverride ? draft.racePace : autoRacePace);
-            const thr = deriveThresholdPace(base);
-            const lng = deriveLongRunPace(base);
-            if (!thr) return null;
-            const isGarmin = !!draft.garminPredictedTime;
-            return (
-              <div style={{ display:"flex",gap:8,marginTop:8 }}>
-                <div style={{ padding:"6px 10px",borderRadius:8,background:"#f5f5f3",fontSize:12,flex:1,textAlign:"center" }}>
-                  <div style={{ fontSize:10,color:"#aaa",marginBottom:2 }}>Threshold</div>
-                  <div style={{ fontWeight:700,color:"#1B6FE8" }}>{thr}/km</div>
-                </div>
-                <div style={{ padding:"6px 10px",borderRadius:8,background:"#f5f5f3",fontSize:12,flex:1,textAlign:"center" }}>
-                  <div style={{ fontSize:10,color:"#aaa",marginBottom:2 }}>Long run</div>
-                  <div style={{ fontWeight:700,color:"#3B6D11" }}>{lng}/km</div>
-                </div>
-                <div style={{ padding:"6px 10px",borderRadius:8,background:isGarmin?"#fff8f0":"#f5f5f3",border:isGarmin?"1px solid #fcd0b088":"none",fontSize:10,color:isGarmin?"#c04a00":"#aaa",flex:1.5,display:"flex",alignItems:"center",justifyContent:"center",textAlign:"center",lineHeight:1.3 }}>
-                  {isGarmin?"Based on Garmin prediction":"Based on goal pace"}
-                </div>
-              </div>
-            );
-          })()}
-        </div>
         <Field label="Easy HR (bpm)" value={draft.easyHR} onChange={v=>set("easyHR",v)} placeholder="130-140"/>
         <div>
           <SectionLabel>Experience</SectionLabel>
