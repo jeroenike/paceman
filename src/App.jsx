@@ -14,6 +14,20 @@ import { DEV_SEED, DEV_SEED_GREEN, DEV_SEED_ORANGE, DEV_SEED_RED } from "./dev-s
 const STORAGE_KEY = "paceman_v4";
 const RACE_GOALS = ["5km","10km","15km","Half Marathon","Marathon","Trail Run","Custom..."];
 const INJURY_AREAS = ["Achilles","Knee","Shin","IT band","Hip flexor","Plantar fascia","Calf","Hamstring"];
+const SEV_COLORS = [null, "#0F6E56", "#8a9a00", "#e08000", "#c04000", "#990000"];
+
+// Normalize injuries: handles old string[] format + new {area, severity}[] format
+function normalizeInjuries(injuries) {
+  if (!Array.isArray(injuries)) return [];
+  return injuries.filter(i => i !== "__none__").map(i =>
+    typeof i === "string" ? { area: i, severity: null } : i
+  );
+}
+
+// Stringify normalized injuries for AI prompts
+function injuriesToText(injuries) {
+  return normalizeInjuries(injuries).map(i => i.severity ? `${i.area} (${i.severity}/5)` : i.area).join(", ") || "none";
+}
 
 /** Effective race distance in km — handles standard goals and custom distance entry. */
 function profileRaceDist(p) {
@@ -289,17 +303,58 @@ function LogForm({ initial, onSave, onCancel, stravaActivities, onImportStrava, 
 
       <div>
         <SectionLabel>Pain areas <span style={{ fontWeight:400,color:"#bbb",fontSize:10,textTransform:"none" }}>optional</span></SectionLabel>
-        <div style={{ display:"flex",flexWrap:"wrap",gap:6 }}>
-          {INJURY_AREAS.map(area=>{
-            const on = (d.injuries||[]).includes(area);
-            return (
-              <button key={area} type="button" onClick={()=>set("injuries",on?(d.injuries||[]).filter(a=>a!==area):[...(d.injuries||[]),area])}
-                style={{ padding:"5px 11px",borderRadius:12,border:`1.5px solid ${on?"#e05020":"#e0e0dc"}`,background:on?"#fff0ec":"#fafafa",color:on?"#c03800":"#999",fontSize:12,fontWeight:on?700:400,cursor:"pointer" }}>
-                {area}
-              </button>
-            );
-          })}
-        </div>
+        {(()=>{
+          const norm = normalizeInjuries(d.injuries || []);
+          const activeAreas = norm.map(i => i.area);
+          function toggleArea(area) {
+            const next = activeAreas.includes(area)
+              ? norm.filter(i => i.area !== area)
+              : [...norm, {area, severity: null}];
+            set("injuries", next);
+          }
+          function setSevLog(area, sev) {
+            set("injuries", norm.map(i => i.area === area ? {...i, severity: sev} : i));
+          }
+          return (
+            <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
+              <div style={{ display:"flex",flexWrap:"wrap",gap:6 }}>
+                {INJURY_AREAS.map(area=>{
+                  const on = activeAreas.includes(area);
+                  return (
+                    <button key={area} type="button" onClick={()=>toggleArea(area)}
+                      style={{ padding:"5px 11px",borderRadius:12,border:`1.5px solid ${on?"#e05020":"#e0e0dc"}`,background:on?"#fff0ec":"#fafafa",color:on?"#c03800":"#999",fontSize:12,fontWeight:on?700:400,cursor:"pointer" }}>
+                      {area}
+                    </button>
+                  );
+                })}
+              </div>
+              {norm.length > 0 && (
+                <div style={{ display:"flex",flexDirection:"column",gap:5 }}>
+                  {norm.map(({area, severity})=>(
+                    <div key={area} style={{ display:"flex",alignItems:"center",gap:8 }}>
+                      <span style={{ fontSize:12,color:"#c03800",fontWeight:600,minWidth:100 }}>🩹 {area}</span>
+                      <div style={{ display:"flex",gap:4,alignItems:"center" }}>
+                        {[1,2,3,4,5].map(n=>{
+                          const sel = severity === n;
+                          const col = SEV_COLORS[n];
+                          return (
+                            <button key={n} type="button" onClick={()=>setSevLog(area, sel ? null : n)}
+                              style={{ width:26,height:26,borderRadius:6,border:`1.5px solid ${sel?col:"#e0e0dc"}`,
+                                background:sel?col+"33":"#fafafa",color:sel?col:"#bbb",
+                                fontSize:11,fontWeight:sel?700:400,cursor:"pointer",padding:0 }}>
+                              {n}
+                            </button>
+                          );
+                        })}
+                        <span style={{ fontSize:10,color:"#ccc",marginLeft:2 }}>severity</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       <div style={{ display:"flex",gap:10 }}>
@@ -845,12 +900,18 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                           const injKey = `${weekStart}_${day}`;
                           const raw = dayInjuries?.[injKey];
                           const isNone = Array.isArray(raw) && raw[0]==="__none__";
-                          const active = isNone ? [] : (raw || []);
+                          const active = isNone ? [] : normalizeInjuries(raw || []);
+                          const activeAreas = active.map(i => i.area);
                           const isLogged = raw !== undefined;
                           const isOpen = injuryPickerDay === day;
                           function toggle(area) {
-                            const next = active.includes(area) ? active.filter(a=>a!==area) : [...active,area];
-                            onSetDayInjury(weekStart,day,next);
+                            const next = activeAreas.includes(area)
+                              ? active.filter(i => i.area !== area)
+                              : [...active, {area, severity: null}];
+                            onSetDayInjury(weekStart, day, next);
+                          }
+                          function setSeverity(area, sev) {
+                            onSetDayInjury(weekStart, day, active.map(i => i.area === area ? {...i, severity: sev} : i));
                           }
                           function setNoInjury() {
                             onSetDayInjury(weekStart,day,["__none__"]);
@@ -861,7 +922,9 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                             setInjuryPickerDay(null);
                           }
                           const btnColor = isNone?"#0a6640":active.length?"#c03800":"#bbb";
-                          const btnLabel = isNone?"✓ No injury":active.length?active.join(", "):"Pain today?";
+                          const btnLabel = isNone?"✓ No injury":active.length
+                            ? active.map(i => i.severity ? `${i.area} ${i.severity}/5` : i.area).join(", ")
+                            : "Pain today?";
                           return (
                             <div style={{ marginTop:8 }}>
                               <button onClick={()=>setInjuryPickerDay(isOpen?null:day)}
@@ -878,7 +941,7 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                                   </button>
                                   <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
                                     {INJURY_AREAS.map(area=>{
-                                      const on = active.includes(area);
+                                      const on = activeAreas.includes(area);
                                       return (
                                         <button key={area} onClick={()=>toggle(area)}
                                           style={{ padding:"4px 9px",borderRadius:12,border:`1.5px solid ${on?"#e05020":"#e0e0dc"}`,background:on?"#fff0ec":"#fafafa",color:on?"#c03800":"#999",fontSize:11,fontWeight:on?700:400,cursor:"pointer" }}>
@@ -887,6 +950,30 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                                       );
                                     })}
                                   </div>
+                                  {active.length > 0 && (
+                                    <div style={{ display:"flex",flexDirection:"column",gap:5,marginTop:6,paddingTop:6,borderTop:"1px solid #f0f0ec" }}>
+                                      {active.map(({area, severity})=>(
+                                        <div key={area} style={{ display:"flex",alignItems:"center",gap:6 }}>
+                                          <span style={{ fontSize:11,color:"#c03800",fontWeight:600,minWidth:82 }}>{area}</span>
+                                          <div style={{ display:"flex",gap:3,alignItems:"center" }}>
+                                            {[1,2,3,4,5].map(n=>{
+                                              const sel = severity === n;
+                                              const col = SEV_COLORS[n];
+                                              return (
+                                                <button key={n} onClick={()=>setSeverity(area, sel ? null : n)}
+                                                  style={{ width:22,height:22,borderRadius:5,border:`1.5px solid ${sel?col:"#e0e0dc"}`,
+                                                    background:sel?col+"33":"#fafafa",color:sel?col:"#bbb",
+                                                    fontSize:10,fontWeight:sel?700:400,cursor:"pointer",padding:0 }}>
+                                                  {n}
+                                                </button>
+                                              );
+                                            })}
+                                            <span style={{ fontSize:9,color:"#ccc",marginLeft:2 }}>sev</span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
                                   <div style={{ display:"flex",gap:10,marginTop:7 }}>
                                     <button onClick={()=>setInjuryPickerDay(null)}
                                       style={{ fontSize:11,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>Done</button>
@@ -941,8 +1028,11 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                               </div>
                               {linked.injuries?.length>0&&(
                                 <div style={{ display:"flex",flexWrap:"wrap",gap:4,marginBottom:6 }}>
-                                  {linked.injuries.map(inj=>(
-                                    <span key={inj} style={{ fontSize:11,padding:"2px 8px",borderRadius:10,background:"#fff0ec",border:"1px solid #fcd0b0",color:"#c03800",fontWeight:600 }}>🩹 {inj}</span>
+                                  {normalizeInjuries(linked.injuries).map(({area, severity})=>(
+                                    <span key={area} style={{ fontSize:11,padding:"2px 7px",borderRadius:10,background:"#fff0ec",border:"1px solid #fcd0b0",color:"#c03800",fontWeight:600,display:"inline-flex",alignItems:"center",gap:4 }}>
+                                      🩹 {area}
+                                      {severity&&<span style={{ background:SEV_COLORS[severity],color:"#fff",borderRadius:4,padding:"0 4px",fontSize:10,fontWeight:700,lineHeight:"16px" }}>{severity}</span>}
+                                    </span>
                                   ))}
                                 </div>
                               )}
@@ -1798,8 +1888,11 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
                 {logged.length > 0 ? (
                   <>
                     <div style={{ display:"flex",flexWrap:"wrap",gap:6,marginBottom:loggedLabel?6:0 }}>
-                      {logged.map(inj=>(
-                        <span key={inj} style={{ padding:"4px 9px",borderRadius:12,background:"#fff0ec",border:"1px solid #fcd0b0",color:"#c03800",fontSize:12,fontWeight:600 }}>{inj}</span>
+                      {normalizeInjuries(logged).map(({area, severity})=>(
+                        <span key={area} style={{ padding:"4px 9px",borderRadius:12,background:"#fff0ec",border:"1px solid #fcd0b0",color:"#c03800",fontSize:12,fontWeight:600,display:"inline-flex",alignItems:"center",gap:5 }}>
+                          {area}
+                          {severity&&<span style={{ background:SEV_COLORS[severity],color:"#fff",borderRadius:4,padding:"0 4px",fontSize:10,fontWeight:700,lineHeight:"16px" }}>{severity}/5</span>}
+                        </span>
                       ))}
                     </div>
                     {loggedLabel&&<div style={{ fontSize:11,color:"#bbb" }}>Last logged: {loggedLabel}</div>}
@@ -2047,7 +2140,7 @@ Type: ${d.type} | Date: ${d.date} | Location: ${d.location||"unknown"}
 Distance: ${d.distance||"unknown"}km | Elevation: ${d.elevation||"unknown"}m
 Pace: ${d.avgPace}/km | Avg HR: ${d.avgHR} | Max HR: ${d.maxHR} | Cadence: ${d.cadence} spm | TE: ${d.te} | RPE: ${d.rpe}/10
 ${d.notes?`Notes: ${d.notes}`:""}${planCtx}
-Injuries: ${p.injuries.join(", ")||"none"}
+Injuries: ${injuriesToText(p.injuries)}
 ## Verdict\nOn target / Too hard / Too easy\n## Metric flags\n## Next session adjustment\n## Injury risk
 After your analysis output exactly this block:
 SCORE_JSON
@@ -2103,7 +2196,7 @@ Athlete profile:
 - Level: ${p.experience}
 - Threshold pace: ${profileTrainingPaces(p).threshold}/km | Race pace: ${p.racePace}/km | Long run pace: ${profileTrainingPaces(p).longRun}/km | Easy HR: ${p.easyHR} bpm${p.garminPredicted ? ` (training paces from Garmin predicted ${p.garminPredicted})` : ""}
 - Schedule (FIXED — use exactly these session types in daySessions): ${JSON.stringify(effectiveSchedule)}
-- Injuries: ${p.injuries.join(", ")||"none"}
+- Injuries: ${injuriesToText(p.injuries)}
 
 Recent sessions:
 ${recentSessions||"No sessions logged yet"}
@@ -2255,7 +2348,9 @@ DAY_JSON`
     const effectiveSchedule = { ...defaultProfile.schedule, ...(store.profile.schedule||{}), ...((store.weekScheduleOverrides||{})[weekStart]||{}) };
     const type = plan.weekGoals.daySessions?.[day]?.type || effectiveSchedule[day];
     const rawInj = (store.dayInjuries||{})[`${weekStart}_${day}`];
-    const activeInj = (Array.isArray(rawInj) && rawInj[0]!=="__none__" && rawInj.length) ? rawInj : undefined;
+    const activeInj = (Array.isArray(rawInj) && rawInj[0]!=="__none__" && rawInj.length)
+      ? normalizeInjuries(rawInj).map(i => i.severity ? `${i.area} (${i.severity}/5)` : i.area)
+      : undefined;
     if (type && type.startsWith("run")) generateDayPlan(weekStart, day, type, intensity === "normal" ? undefined : intensity, activeInj);
   }
 
@@ -2287,7 +2382,10 @@ DAY_JSON`
     const effectiveSchedule = { ...defaultProfile.schedule, ...(store.profile.schedule||{}), ...((store.weekScheduleOverrides||{})[weekStart]||{}) };
     const type = plan.weekGoals.daySessions?.[day]?.type || effectiveSchedule[day];
     const curIntensity = (store.dayIntensity||{})[`${weekStart}_${day}`];
-    if (type && type.startsWith("run")) generateDayPlan(weekStart, day, type, curIntensity, injuries);
+    if (type && type.startsWith("run")) {
+      const injCtx = normalizeInjuries(injuries).map(i => i.severity ? `${i.area} (${i.severity}/5)` : i.area);
+      generateDayPlan(weekStart, day, type, curIntensity, injCtx);
+    }
   }
 
   async function generateWeekPlan(weekStart) {
@@ -2348,7 +2446,7 @@ DAY_JSON`
       const r = await callClaude(SYSTEM,
         `Complete session plan: ${SESSION_LABELS[type]} on ${day}
 Athlete: ${goalLabel} in ${p.goalTime} | Threshold ${profileTrainingPaces(p).threshold}/km | Easy HR ${p.easyHR} bpm | ${p.experience}
-Injuries: ${p.injuries.join(", ")||"none"}
+Injuries: ${injuriesToText(p.injuries)}
 ${dayGoal?`Week goal for this session: ${dayGoal}`:""}
 Recent load: ${(store.sessions||[]).slice(-2).map(s=>`${s.type} TE:${s.te}`).join(", ")||"unknown"}
 ## Warm-up\n## Main set\n## Cool-down\n## Fueling\n## 3 common mistakes
