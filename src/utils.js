@@ -49,6 +49,18 @@ export function computeRacePace(goal, goalTime) {
   return secsTopace(Math.round(secs / dist));
 }
 
+/** Compute threshold and long run training paces from a fitness pace (sec/km).
+ *  Threshold: 8% faster than fitness pace (lactate threshold effort).
+ *  Long run:  20% slower than fitness pace (easy aerobic effort).
+ *  Returns { threshold, longRun } as "M:SS" strings, or null for each if invalid. */
+export function computeTrainingPaces(fitnessPaceSecs) {
+  if (!fitnessPaceSecs || fitnessPaceSecs <= 0) return { threshold: null, longRun: null };
+  return {
+    threshold: secsTopace(Math.round(fitnessPaceSecs * 0.92)),
+    longRun:   secsTopace(Math.round(fitnessPaceSecs * 1.20)),
+  };
+}
+
 /** Compute goal time string from goal label + race pace string */
 export function computeGoalTime(goal, racePace) {
   const dist = RACE_DISTANCES[goal];
@@ -327,23 +339,51 @@ export function deriveLongRunPace(racePaceStr) {
 }
 
 /**
- * Compute projected race finish time from recent logged runs.
- * Prefers threshold + interval sessions (best race pace predictors).
- * Falls back to all run sessions if fewer than 2 quality sessions exist.
- * Uses exponential recency weighting (weight = 0.85^i) across last 8 sessions.
- * Requires at least 2 sessions and a valid race goal + race pace in profile.
+ * Compute projected race finish time.
+ * Source priority:
+ *   1. garminPredicted — only for standard goals (5km/10km/HM/Marathon) where
+ *      Garmin's prediction applies to the same race distance.
+ *   2. Weighted average of threshold/interval sessions (best race pace predictors).
+ *      Falls back to all run sessions when fewer than 2 quality sessions exist.
+ * Custom/Trail goals skip garminPredicted (it's a different-race estimate).
  */
 export function computeRaceProjection(sessions, profile) {
-  const raceDist = RACE_DISTANCES[profile?.goal];
+  const raceDist = RACE_DISTANCES[profile?.goal]
+    || (profile?.goal === "Custom..." && profile?.goalCustomDist ? parseFloat(profile.goalCustomDist) : null);
   const goalPaceSecs = parsePace(profile?.racePace);
   if (!raceDist || !goalPaceSecs) return null;
 
+  const goalTimeSecs = Math.round(goalPaceSecs * raceDist);
+
+  // Priority 1: Garmin predicted time (standard goals only)
+  const isStandardGoal = !!RACE_DISTANCES[profile?.goal];
+  if (isStandardGoal && profile?.garminPredicted) {
+    const parts = profile.garminPredicted.split(":").map(Number);
+    let predSecs;
+    if (parts.length === 3) predSecs = parts[0] * 3600 + parts[1] * 60 + (parts[2] || 0);
+    else if (parts.length === 2) predSecs = parts[0] * 60 + (parts[1] || 0);
+    if (predSecs && predSecs > 0) {
+      const projPaceSecs = predSecs / raceDist;
+      const gapSecs = predSecs - goalTimeSecs;
+      return {
+        projPace: secsTopace(Math.round(projPaceSecs)),
+        projTime: secsToTime(predSecs),
+        goalTime: secsToTime(goalTimeSecs),
+        gapSecs,
+        goalTimeSecs,
+        sampleSize: null,
+        source: "garmin",
+        usingQualitySessions: false,
+        pct: Math.min(100, Math.round((goalTimeSecs / predSecs) * 100)),
+      };
+    }
+  }
+
+  // Priority 2: weighted average of recent runs (quality sessions preferred)
   const allRuns = (sessions || [])
     .filter(s => s.type?.startsWith("run") && parsePace(s.avgPace) !== null)
     .sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  // Quality sessions (threshold + intervals) predict race pace far better than
-  // easy/long runs, which are deliberately run 40–90s/km slower than race effort.
   const qualityRuns = allRuns.filter(s => s.type === "run_threshold" || s.type === "run_interval");
   const usingQualitySessions = qualityRuns.length >= 2;
   const runs = usingQualitySessions ? qualityRuns.slice(0, 8) : allRuns.slice(0, 8);
@@ -358,8 +398,7 @@ export function computeRaceProjection(sessions, profile) {
   });
   const projPaceSecs = weightedSum / totalWeight;
   const projTimeSecs = Math.round(projPaceSecs * raceDist);
-  const goalTimeSecs = Math.round(goalPaceSecs * raceDist);
-  const gapSecs = projTimeSecs - goalTimeSecs; // positive = slower than goal
+  const gapSecs = projTimeSecs - goalTimeSecs;
 
   return {
     projPace: secsTopace(Math.round(projPaceSecs)),
@@ -368,8 +407,8 @@ export function computeRaceProjection(sessions, profile) {
     gapSecs,
     goalTimeSecs,
     sampleSize: runs.length,
+    source: "runs",
     usingQualitySessions,
-    // % of goal achieved — how close projected is to goal (100% = exactly on goal, <100% = behind)
     pct: Math.min(100, Math.round((goalTimeSecs / projTimeSecs) * 100)),
   };
 }
