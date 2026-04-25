@@ -444,7 +444,7 @@ function WeekScheduleEditor({ weekStart, profile, weekScheduleOverrides, onSave 
 
 // ── Home Screen ──
 
-function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGeneratePlan, onGenerateAllPlans, onGoProfile, onSaveScheduleOverride, onSaveSession }) {
+function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGeneratePlan, onGenerateAllPlans, onGoProfile, onSaveScheduleOverride, onSaveSession, onSetDayIntensity }) {
   const [activeWeekStart, setActiveWeekStart] = useState(getCurrentWeekStart);
   const [scheduleEdit, setScheduleEdit] = useState(false);
   const goalLabel = store.profile.goal==="Custom..."?store.profile.goalCustom:store.profile.goal;
@@ -649,6 +649,8 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
         raceDate={store.profile.goalDate}
         onSaveSession={onSaveSession}
         longRunPace={effectiveLongRunPace}
+        dayIntensity={store.dayIntensity||{}}
+        onSetDayIntensity={onSetDayIntensity}
       />
     </div>
   );
@@ -656,7 +658,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
 
 // ── Week Day List ──
 
-function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride, raceDate, onSaveSession, longRunPace }) {
+function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride, raceDate, onSaveSession, longRunPace, dayIntensity, onSetDayIntensity }) {
   const [pickerDay, setPickerDay] = useState(null);
   const [inlineFormDay, setInlineFormDay] = useState(null); // {day, initial} or null
   const weekStartDate = new Date(weekStart + "T00:00:00");
@@ -797,6 +799,26 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                         ) : (
                           <div style={{ fontSize:12,color:"#bbb",fontStyle:"italic" }}>No training details yet.</div>
                         )}
+                        {/* Intensity selector — run days, non-past, plan exists */}
+                        {isRun&&!isPast&&weekPlan&&onSetDayIntensity&&(()=>{
+                          const intensityKey = `${weekStart}_${day}`;
+                          const cur = dayIntensity?.[intensityKey] || "normal";
+                          const opts = [
+                            { id:"easy", label:"Easy", icon:"🌿" },
+                            { id:"normal", label:"Normal", icon:"○" },
+                            { id:"hard", label:"Hard", icon:"⚡" },
+                          ];
+                          return (
+                            <div style={{ display:"flex",gap:6,marginTop:10 }}>
+                              {opts.map(o=>(
+                                <button key={o.id} onClick={()=>onSetDayIntensity(weekStart,day,o.id)}
+                                  style={{ flex:1,padding:"5px 0",borderRadius:16,border:`1.5px solid ${cur===o.id?color:"#e0e0dc"}`,background:cur===o.id?`${color}18`:"#fafafa",color:cur===o.id?color:"#999",fontSize:11,fontWeight:cur===o.id?700:400,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:3 }}>
+                                  <span>{o.icon}</span><span>{o.label}</span>
+                                </button>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
 
@@ -2033,7 +2055,7 @@ Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.
     persist({ weekPlans: [...plans.filter(p => p.weekStart !== weekStart), updatedPlan].sort((a, b) => a.weekStart.localeCompare(b.weekStart)) });
   }
 
-  async function generateDayPlan(weekStart, day, newType) {
+  async function generateDayPlan(weekStart, day, newType, intensity) {
     await run(async () => {
       setLoadingMsg(`Generating ${day} plan…`);
       const p = store.profile;
@@ -2042,13 +2064,18 @@ Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.
       const weekCtx = activePlan?.weekGoals
         ? `Week target: ${activePlan.weekGoals.totalDistance}km, target pace: ${activePlan.weekGoals.targetPace || "n/a"}/km`
         : "No week plan yet";
+      const intensityCtx = intensity === "easy"
+        ? "\nINTENSITY: EASY — athlete is fatigued or managing discomfort. Reduce volume ~30%, lower all targets, keep effort genuinely easy. Prioritise completing movement without added stress."
+        : intensity === "hard"
+        ? "\nINTENSITY: HARD — athlete is feeling strong and fresh. Increase volume ~20%, sharpen targets, add reps or extend the main set to maximise fitness adaptation."
+        : "";
       const r = await callClaude(
         "You are an elite running coach AI. Output valid JSON only — no markdown, no prose.",
         `Generate a single training session for ${day}, week starting ${weekStart}.
 Session type: ${SESSION_LABELS[newType] || newType} (${newType})
 Athlete: ${goalLabel} in ${p.goalTime} | Threshold: ${profileTrainingPaces(p).threshold}/km | Race pace: ${p.racePace}/km | Long run pace: ${profileTrainingPaces(p).longRun}/km | Easy HR: ${p.easyHR} bpm | Level: ${p.experience}${p.garminPredicted ? ` | Current fitness: ${p.garminPredicted}` : ""}
 Week context: ${weekCtx}
-Injuries: ${(p.injuries || []).join(", ") || "none"}
+Injuries: ${(p.injuries || []).join(", ") || "none"}${intensityCtx}
 
 Respond with ONLY this JSON:
 DAY_JSON
@@ -2106,6 +2133,18 @@ DAY_JSON`
         // Run type but day is in the past — leave existing plan as-is (locked)
       }
     }
+  }
+
+  function handleSetDayIntensity(weekStart, day, intensity) {
+    const key = `${weekStart}_${day}`;
+    const updated = { ...(store.dayIntensity || {}) };
+    if (intensity === "normal") { delete updated[key]; } else { updated[key] = intensity; }
+    persist({ dayIntensity: updated });
+    const plan = (store.weekPlans || []).find(wp => wp.weekStart === weekStart);
+    if (!plan?.weekGoals) return;
+    const effectiveSchedule = { ...defaultProfile.schedule, ...(store.profile.schedule||{}), ...((store.weekScheduleOverrides||{})[weekStart]||{}) };
+    const type = plan.weekGoals.daySessions?.[day]?.type || effectiveSchedule[day];
+    if (type && type.startsWith("run")) generateDayPlan(weekStart, day, type, intensity === "normal" ? undefined : intensity);
   }
 
   async function generateWeekPlan(weekStart) {
@@ -2184,7 +2223,7 @@ Include: exact paces, HR zones (bpm), cadence targets, rep structure, rest.`);
   return (
     <div style={{ maxWidth:430,margin:"0 auto",minHeight:"100vh",display:"flex",flexDirection:"column",background:"#fff" }}>
       <div style={{ flex:1,overflowY:"auto",display:"flex",flexDirection:"column" }}>
-        {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} loadingMsg={loadingMsg} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onGenerateAllPlans={generateAllPlans} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={handleScheduleOverride} onSaveSession={saveSession}/>}
+        {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} loadingMsg={loadingMsg} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onGenerateAllPlans={generateAllPlans} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={handleScheduleOverride} onSaveSession={saveSession} onSetDayIntensity={handleSetDayIntensity}/>}
         {screen==="session"&&<SessionScreen store={store} activeDay={activeDay} loading={loading} error={error} aiText={aiText} onBack={()=>{ setScreen("home"); setAiText(""); setActiveDay(null); }}/>}
         {screen==="log"&&<LogScreen store={store} loading={loading} error={error} aiText={aiText} stravaLoading={stravaLoading} stravaActivities={stravaActivities} onImportStrava={importFromStrava} onSaveSession={saveSession} onBulkSave={bulkSaveSessions} onBulkDelete={bulkDeleteSessions} onAnalyze={analyzeSession} editingSession={editingSession} setEditingSession={setEditingSession}/>}
         {screen==="progress"&&<ProgressScreen store={store}/>}
