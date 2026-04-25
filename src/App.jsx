@@ -2120,7 +2120,6 @@ Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.
         : intensity === "hard"
         ? "\nINTENSITY: HARD — athlete is feeling strong and fresh. Increase volume ~20%, sharpen targets, add reps or extend the main set to maximise fitness adaptation."
         : "";
-      const allInjuries = [...new Set([...(p.injuries||[]), ...(dayInjuries||[])])];
       const injuryCtx = dayInjuries?.length
         ? `\nTODAY'S PAIN AREAS: ${dayInjuries.join(", ")} — modify the session to protect these areas. Avoid movements that load them directly; suggest alternatives where relevant.`
         : "";
@@ -2129,8 +2128,7 @@ Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.
         `Generate a single training session for ${day}, week starting ${weekStart}.
 Session type: ${SESSION_LABELS[newType] || newType} (${newType})
 Athlete: ${goalLabel} in ${p.goalTime} | Threshold: ${profileTrainingPaces(p).threshold}/km | Race pace: ${p.racePace}/km | Long run pace: ${profileTrainingPaces(p).longRun}/km | Easy HR: ${p.easyHR} bpm | Level: ${p.experience}${p.garminPredicted ? ` | Current fitness: ${p.garminPredicted}` : ""}
-Week context: ${weekCtx}
-Injuries: ${allInjuries.join(", ") || "none"}${intensityCtx}${injuryCtx}
+Week context: ${weekCtx}${intensityCtx}${injuryCtx}
 
 Respond with ONLY this JSON:
 DAY_JSON
