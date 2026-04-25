@@ -339,6 +339,24 @@ export function deriveLongRunPace(racePaceStr) {
 }
 
 /**
+ * Normalize injuries to [{area, severity}] format.
+ * Handles legacy string[] data stored before severity was added.
+ */
+export function normalizeInjuries(injuries) {
+  if (!Array.isArray(injuries)) return [];
+  return injuries.filter(i => i !== "__none__").map(i =>
+    typeof i === "string" ? { area: i, severity: null } : i
+  );
+}
+
+/** Stringify injuries for AI prompts, including severity when present. */
+export function injuriesToText(injuries) {
+  return normalizeInjuries(injuries)
+    .map(i => i.severity ? `${i.area} (${i.severity}/5)` : i.area)
+    .join(", ") || "none";
+}
+
+/**
  * Compute projected race finish time.
  * Source priority:
  *   1. garminPredicted — only for standard goals (5km/10km/HM/Marathon) where

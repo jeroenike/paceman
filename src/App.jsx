@@ -8,6 +8,7 @@ import {
   computeAutoScore, bulkDeleteSessions as utilBulkDelete,
   isDayAfterRace, isDayRaceDay, isWeekInPast,
   secsToTime, computePlanDeltas, computeRaceProjection,
+  normalizeInjuries, injuriesToText,
 } from "./utils.js";
 import { DEV_SEED, DEV_SEED_GREEN, DEV_SEED_ORANGE, DEV_SEED_RED } from "./dev-seed.js";
 
@@ -15,19 +16,6 @@ const STORAGE_KEY = "paceman_v4";
 const RACE_GOALS = ["5km","10km","15km","Half Marathon","Marathon","Trail Run","Custom..."];
 const INJURY_AREAS = ["Achilles","Knee","Shin","IT band","Hip flexor","Plantar fascia","Calf","Hamstring"];
 const SEV_COLORS = [null, "#0F6E56", "#8a9a00", "#e08000", "#c04000", "#990000"];
-
-// Normalize injuries: handles old string[] format + new {area, severity}[] format
-function normalizeInjuries(injuries) {
-  if (!Array.isArray(injuries)) return [];
-  return injuries.filter(i => i !== "__none__").map(i =>
-    typeof i === "string" ? { area: i, severity: null } : i
-  );
-}
-
-// Stringify normalized injuries for AI prompts
-function injuriesToText(injuries) {
-  return normalizeInjuries(injuries).map(i => i.severity ? `${i.area} (${i.severity}/5)` : i.area).join(", ") || "none";
-}
 
 /** Effective race distance in km — handles standard goals and custom distance entry. */
 function profileRaceDist(p) {

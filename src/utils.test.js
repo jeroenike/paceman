@@ -9,6 +9,7 @@ import {
   isDayAfterRace, isDayRaceDay, isWeekInPast,
   DAY_LABELS, SESSION_LABELS, SESSION_COLORS,
   secsToTime, parseDistanceFromMainSet, computePlanDeltas, computeRaceProjection,
+  deriveThresholdPace, deriveLongRunPace, normalizeInjuries, injuriesToText,
 } from "./utils.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -716,4 +717,86 @@ describe("constants", () => {
       expect(SESSION_COLORS[t]).toMatch(/^#[0-9a-fA-F]{6}$/)
     );
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// deriveThresholdPace — Jack Daniels T-pace ~6.5% faster than race pace
+// ─────────────────────────────────────────────────────────────────────────────
+describe("deriveThresholdPace", () => {
+  it("derives 4:55 from 5:15 race pace", () => expect(deriveThresholdPace("5:15")).toBe("4:55"));
+  it("derives a faster pace (fewer seconds) than the input", () => {
+    const raceSecs = parsePace("5:00");
+    const thrSecs = parsePace(deriveThresholdPace("5:00"));
+    expect(thrSecs).toBeLessThan(raceSecs);
+  });
+  it("returns null for null input", () => expect(deriveThresholdPace(null)).toBeNull());
+  it("returns null for empty string", () => expect(deriveThresholdPace("")).toBeNull());
+  it("rounds to nearest second", () => {
+    const result = deriveThresholdPace("5:00");
+    expect(result).toMatch(/^\d+:\d{2}$/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// deriveLongRunPace — ~7.5% slower than race pace
+// ─────────────────────────────────────────────────────────────────────────────
+describe("deriveLongRunPace", () => {
+  it("derives ~5:39 from 5:15 race pace (within ±3s)", () => {
+    const result = parsePace(deriveLongRunPace("5:15"));
+    expect(result).toBeGreaterThanOrEqual(336); // 5:36
+    expect(result).toBeLessThanOrEqual(342);    // 5:42
+  });
+  it("derives a slower pace (more seconds) than the input", () => {
+    const raceSecs = parsePace("5:00");
+    const lrSecs = parsePace(deriveLongRunPace("5:00"));
+    expect(lrSecs).toBeGreaterThan(raceSecs);
+  });
+  it("returns null for null input", () => expect(deriveLongRunPace(null)).toBeNull());
+  it("returns null for empty string", () => expect(deriveLongRunPace("")).toBeNull());
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// normalizeInjuries — backward-compat with string[] and new {area,severity}[]
+// ─────────────────────────────────────────────────────────────────────────────
+describe("normalizeInjuries", () => {
+  it("converts string array to object array", () => {
+    expect(normalizeInjuries(["Achilles", "Knee"])).toEqual([
+      { area: "Achilles", severity: null },
+      { area: "Knee", severity: null },
+    ]);
+  });
+  it("passes through object array unchanged", () => {
+    const input = [{ area: "Achilles", severity: 3 }];
+    expect(normalizeInjuries(input)).toEqual(input);
+  });
+  it("filters out __none__ sentinel", () => {
+    expect(normalizeInjuries(["__none__"])).toEqual([]);
+  });
+  it("handles mixed strings and objects", () => {
+    const result = normalizeInjuries(["Achilles", { area: "Knee", severity: 2 }]);
+    expect(result).toEqual([
+      { area: "Achilles", severity: null },
+      { area: "Knee", severity: 2 },
+    ]);
+  });
+  it("returns empty array for null", () => expect(normalizeInjuries(null)).toEqual([]));
+  it("returns empty array for empty array", () => expect(normalizeInjuries([])).toEqual([]));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// injuriesToText — AI prompt string with optional severity
+// ─────────────────────────────────────────────────────────────────────────────
+describe("injuriesToText", () => {
+  it("formats string injuries without severity", () =>
+    expect(injuriesToText(["Achilles", "Knee"])).toBe("Achilles, Knee"));
+  it("includes severity when present", () =>
+    expect(injuriesToText([{ area: "Achilles", severity: 3 }])).toBe("Achilles (3/5)"));
+  it("omits severity when null", () =>
+    expect(injuriesToText([{ area: "Achilles", severity: null }])).toBe("Achilles"));
+  it("mixes entries with and without severity", () =>
+    expect(injuriesToText([{ area: "Achilles", severity: 2 }, { area: "Knee", severity: null }]))
+      .toBe("Achilles (2/5), Knee"));
+  it("returns 'none' for empty array", () => expect(injuriesToText([])).toBe("none"));
+  it("returns 'none' for null", () => expect(injuriesToText(null)).toBe("none"));
+  it("returns 'none' for __none__ sentinel", () => expect(injuriesToText(["__none__"])).toBe("none"));
 });
