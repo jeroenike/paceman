@@ -13,6 +13,7 @@ import { DEV_SEED, DEV_SEED_GREEN, DEV_SEED_ORANGE, DEV_SEED_RED } from "./dev-s
 
 const STORAGE_KEY = "paceman_v4";
 const RACE_GOALS = ["5km","10km","15km","Half Marathon","Marathon","Trail Run","Custom..."];
+const INJURY_AREAS = ["Achilles","Knee","Shin","IT band","Hip flexor","Plantar fascia","Calf","Hamstring"];
 
 /** Effective race distance in km — handles standard goals and custom distance entry. */
 function profileRaceDist(p) {
@@ -444,7 +445,7 @@ function WeekScheduleEditor({ weekStart, profile, weekScheduleOverrides, onSave 
 
 // ── Home Screen ──
 
-function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGeneratePlan, onGenerateAllPlans, onGoProfile, onSaveScheduleOverride, onSaveSession, onSetDayIntensity }) {
+function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGeneratePlan, onGenerateAllPlans, onGoProfile, onSaveScheduleOverride, onSaveSession, onSetDayIntensity, onSetDayInjury }) {
   const [activeWeekStart, setActiveWeekStart] = useState(getCurrentWeekStart);
   const [scheduleEdit, setScheduleEdit] = useState(false);
   const goalLabel = store.profile.goal==="Custom..."?store.profile.goalCustom:store.profile.goal;
@@ -651,6 +652,8 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
         longRunPace={effectiveLongRunPace}
         dayIntensity={store.dayIntensity||{}}
         onSetDayIntensity={onSetDayIntensity}
+        dayInjuries={store.dayInjuries||{}}
+        onSetDayInjury={onSetDayInjury}
       />
     </div>
   );
@@ -658,7 +661,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
 
 // ── Week Day List ──
 
-function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride, raceDate, onSaveSession, longRunPace, dayIntensity, onSetDayIntensity }) {
+function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride, raceDate, onSaveSession, longRunPace, dayIntensity, onSetDayIntensity, dayInjuries, onSetDayInjury }) {
   const [pickerDay, setPickerDay] = useState(null);
   const [inlineFormDay, setInlineFormDay] = useState(null); // {day, initial} or null
   const weekStartDate = new Date(weekStart + "T00:00:00");
@@ -816,6 +819,31 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                                   <span>{o.icon}</span><span>{o.label}</span>
                                 </button>
                               ))}
+                            </div>
+                          );
+                        })()}
+                        {/* Pain area selector — run days, non-past, plan exists */}
+                        {isRun&&!isPast&&weekPlan&&onSetDayInjury&&(()=>{
+                          const injKey = `${weekStart}_${day}`;
+                          const active = dayInjuries?.[injKey] || [];
+                          function toggle(area) {
+                            const next = active.includes(area) ? active.filter(a=>a!==area) : [...active,area];
+                            onSetDayInjury(weekStart,day,next);
+                          }
+                          return (
+                            <div style={{ marginTop:8 }}>
+                              <div style={{ fontSize:10,fontWeight:700,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5 }}>Pain today</div>
+                              <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
+                                {INJURY_AREAS.map(area=>{
+                                  const on = active.includes(area);
+                                  return (
+                                    <button key={area} onClick={()=>toggle(area)}
+                                      style={{ padding:"4px 9px",borderRadius:12,border:`1.5px solid ${on?"#e05020":"#e0e0dc"}`,background:on?"#fff0ec":"#fafafa",color:on?"#c03800":"#999",fontSize:11,fontWeight:on?700:400,cursor:"pointer" }}>
+                                      {area}
+                                    </button>
+                                  );
+                                })}
+                              </div>
                             </div>
                           );
                         })()}
@@ -2055,7 +2083,7 @@ Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.
     persist({ weekPlans: [...plans.filter(p => p.weekStart !== weekStart), updatedPlan].sort((a, b) => a.weekStart.localeCompare(b.weekStart)) });
   }
 
-  async function generateDayPlan(weekStart, day, newType, intensity) {
+  async function generateDayPlan(weekStart, day, newType, intensity, dayInjuries) {
     await run(async () => {
       setLoadingMsg(`Generating ${day} plan…`);
       const p = store.profile;
@@ -2069,13 +2097,17 @@ Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.
         : intensity === "hard"
         ? "\nINTENSITY: HARD — athlete is feeling strong and fresh. Increase volume ~20%, sharpen targets, add reps or extend the main set to maximise fitness adaptation."
         : "";
+      const allInjuries = [...new Set([...(p.injuries||[]), ...(dayInjuries||[])])];
+      const injuryCtx = dayInjuries?.length
+        ? `\nTODAY'S PAIN AREAS: ${dayInjuries.join(", ")} — modify the session to protect these areas. Avoid movements that load them directly; suggest alternatives where relevant.`
+        : "";
       const r = await callClaude(
         "You are an elite running coach AI. Output valid JSON only — no markdown, no prose.",
         `Generate a single training session for ${day}, week starting ${weekStart}.
 Session type: ${SESSION_LABELS[newType] || newType} (${newType})
 Athlete: ${goalLabel} in ${p.goalTime} | Threshold: ${profileTrainingPaces(p).threshold}/km | Race pace: ${p.racePace}/km | Long run pace: ${profileTrainingPaces(p).longRun}/km | Easy HR: ${p.easyHR} bpm | Level: ${p.experience}${p.garminPredicted ? ` | Current fitness: ${p.garminPredicted}` : ""}
 Week context: ${weekCtx}
-Injuries: ${(p.injuries || []).join(", ") || "none"}${intensityCtx}
+Injuries: ${allInjuries.join(", ") || "none"}${intensityCtx}${injuryCtx}
 
 Respond with ONLY this JSON:
 DAY_JSON
@@ -2144,7 +2176,20 @@ DAY_JSON`
     if (!plan?.weekGoals) return;
     const effectiveSchedule = { ...defaultProfile.schedule, ...(store.profile.schedule||{}), ...((store.weekScheduleOverrides||{})[weekStart]||{}) };
     const type = plan.weekGoals.daySessions?.[day]?.type || effectiveSchedule[day];
-    if (type && type.startsWith("run")) generateDayPlan(weekStart, day, type, intensity === "normal" ? undefined : intensity);
+    if (type && type.startsWith("run")) generateDayPlan(weekStart, day, type, intensity === "normal" ? undefined : intensity, (store.dayInjuries||{})[`${weekStart}_${day}`]);
+  }
+
+  function handleSetDayInjury(weekStart, day, injuries) {
+    const key = `${weekStart}_${day}`;
+    const updated = { ...(store.dayInjuries || {}) };
+    if (!injuries?.length) { delete updated[key]; } else { updated[key] = injuries; }
+    persist({ dayInjuries: updated });
+    const plan = (store.weekPlans || []).find(wp => wp.weekStart === weekStart);
+    if (!plan?.weekGoals) return;
+    const effectiveSchedule = { ...defaultProfile.schedule, ...(store.profile.schedule||{}), ...((store.weekScheduleOverrides||{})[weekStart]||{}) };
+    const type = plan.weekGoals.daySessions?.[day]?.type || effectiveSchedule[day];
+    const curIntensity = (store.dayIntensity||{})[`${weekStart}_${day}`];
+    if (type && type.startsWith("run")) generateDayPlan(weekStart, day, type, curIntensity, injuries?.length ? injuries : undefined);
   }
 
   async function generateWeekPlan(weekStart) {
@@ -2223,7 +2268,7 @@ Include: exact paces, HR zones (bpm), cadence targets, rep structure, rest.`);
   return (
     <div style={{ maxWidth:430,margin:"0 auto",minHeight:"100vh",display:"flex",flexDirection:"column",background:"#fff" }}>
       <div style={{ flex:1,overflowY:"auto",display:"flex",flexDirection:"column" }}>
-        {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} loadingMsg={loadingMsg} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onGenerateAllPlans={generateAllPlans} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={handleScheduleOverride} onSaveSession={saveSession} onSetDayIntensity={handleSetDayIntensity}/>}
+        {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} loadingMsg={loadingMsg} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onGenerateAllPlans={generateAllPlans} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={handleScheduleOverride} onSaveSession={saveSession} onSetDayIntensity={handleSetDayIntensity} onSetDayInjury={handleSetDayInjury}/>}
         {screen==="session"&&<SessionScreen store={store} activeDay={activeDay} loading={loading} error={error} aiText={aiText} onBack={()=>{ setScreen("home"); setAiText(""); setActiveDay(null); }}/>}
         {screen==="log"&&<LogScreen store={store} loading={loading} error={error} aiText={aiText} stravaLoading={stravaLoading} stravaActivities={stravaActivities} onImportStrava={importFromStrava} onSaveSession={saveSession} onBulkSave={bulkSaveSessions} onBulkDelete={bulkDeleteSessions} onAnalyze={analyzeSession} editingSession={editingSession} setEditingSession={setEditingSession}/>}
         {screen==="progress"&&<ProgressScreen store={store}/>}
