@@ -843,28 +843,39 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                         {/* Pain area selector — collapsed behind button; run days, non-past, plan exists */}
                         {isRun&&!isPast&&weekPlan&&onSetDayInjury&&(()=>{
                           const injKey = `${weekStart}_${day}`;
-                          const active = dayInjuries?.[injKey] || [];
+                          const raw = dayInjuries?.[injKey];
+                          const isNone = Array.isArray(raw) && raw[0]==="__none__";
+                          const active = isNone ? [] : (raw || []);
+                          const isLogged = raw !== undefined;
                           const isOpen = injuryPickerDay === day;
                           function toggle(area) {
                             const next = active.includes(area) ? active.filter(a=>a!==area) : [...active,area];
                             onSetDayInjury(weekStart,day,next);
                           }
+                          function setNoInjury() {
+                            onSetDayInjury(weekStart,day,["__none__"]);
+                            setInjuryPickerDay(null);
+                          }
                           function clearAll() {
                             onSetDayInjury(weekStart,day,[]);
                             setInjuryPickerDay(null);
                           }
+                          const btnColor = isNone?"#0a6640":active.length?"#c03800":"#bbb";
+                          const btnLabel = isNone?"✓ No injury":active.length?active.join(", "):"Pain today?";
                           return (
                             <div style={{ marginTop:8 }}>
                               <button onClick={()=>setInjuryPickerDay(isOpen?null:day)}
                                 style={{ background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",alignItems:"center",gap:5 }}>
-                                <span style={{ fontSize:11,color:active.length?"#c03800":"#bbb" }}>🩹</span>
-                                <span style={{ fontSize:11,color:active.length?"#c03800":"#bbb",fontWeight:active.length?600:400 }}>
-                                  {active.length ? active.join(", ") : "Pain today?"}
-                                </span>
+                                <span style={{ fontSize:11,color:btnColor }}>🩹</span>
+                                <span style={{ fontSize:11,color:btnColor,fontWeight:isLogged?600:400 }}>{btnLabel}</span>
                                 <span style={{ fontSize:10,color:"#ccc" }}>{isOpen?"▴":"▾"}</span>
                               </button>
                               {isOpen&&(
                                 <div style={{ marginTop:7 }}>
+                                  <button onClick={setNoInjury}
+                                    style={{ marginBottom:8,padding:"5px 12px",borderRadius:12,border:`1.5px solid ${isNone?"#0a6640":"#e0e0dc"}`,background:isNone?"#edfaf3":"#fafafa",color:isNone?"#0a6640":"#999",fontSize:11,fontWeight:isNone?700:400,cursor:"pointer" }}>
+                                    ✓ No injury today
+                                  </button>
                                   <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
                                     {INJURY_AREAS.map(area=>{
                                       const on = active.includes(area);
@@ -879,8 +890,8 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                                   <div style={{ display:"flex",gap:10,marginTop:7 }}>
                                     <button onClick={()=>setInjuryPickerDay(null)}
                                       style={{ fontSize:11,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>Done</button>
-                                    {active.length>0&&<button onClick={clearAll}
-                                      style={{ fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",padding:0 }}>Clear</button>}
+                                    {isLogged&&<button onClick={clearAll}
+                                      style={{ fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",padding:0 }}>Reset</button>}
                                   </div>
                                 </div>
                               )}
@@ -1776,7 +1787,7 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
             const logged = store.profile.injuries || [];
             const loggedLabel = store.profile.injuriesLoggedLabel;
             return (
-              <div style={{ padding:"10px 12px",borderRadius:8,border:"1px solid #eee",background:"#fafaf8" }}>
+              <div style={{ padding:"10px 12px",borderRadius:8,border:`1px solid ${loggedLabel&&logged.length===0?"#b8e8cd":"#eee"}`,background:loggedLabel&&logged.length===0?"#f0faf5":"#fafaf8" }}>
                 {logged.length > 0 ? (
                   <>
                     <div style={{ display:"flex",flexWrap:"wrap",gap:6,marginBottom:loggedLabel?6:0 }}>
@@ -1785,6 +1796,11 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
                       ))}
                     </div>
                     {loggedLabel&&<div style={{ fontSize:11,color:"#bbb" }}>Last logged: {loggedLabel}</div>}
+                  </>
+                ) : loggedLabel ? (
+                  <>
+                    <div style={{ fontSize:12,fontWeight:600,color:"#0a6640",marginBottom:3 }}>✓ No injuries</div>
+                    <div style={{ fontSize:11,color:"#bbb" }}>Last logged: {loggedLabel}</div>
                   </>
                 ) : (
                   <div style={{ fontSize:12,color:"#bbb" }}>No injuries logged — use "Pain today?" on a training day to log them.</div>
@@ -2231,12 +2247,15 @@ DAY_JSON`
     if (!plan?.weekGoals) return;
     const effectiveSchedule = { ...defaultProfile.schedule, ...(store.profile.schedule||{}), ...((store.weekScheduleOverrides||{})[weekStart]||{}) };
     const type = plan.weekGoals.daySessions?.[day]?.type || effectiveSchedule[day];
-    if (type && type.startsWith("run")) generateDayPlan(weekStart, day, type, intensity === "normal" ? undefined : intensity, (store.dayInjuries||{})[`${weekStart}_${day}`]);
+    const rawInj = (store.dayInjuries||{})[`${weekStart}_${day}`];
+    const activeInj = (Array.isArray(rawInj) && rawInj[0]!=="__none__" && rawInj.length) ? rawInj : undefined;
+    if (type && type.startsWith("run")) generateDayPlan(weekStart, day, type, intensity === "normal" ? undefined : intensity, activeInj);
   }
 
   function handleSetDayInjury(weekStart, day, injuries) {
     const key = `${weekStart}_${day}`;
     const updated = { ...(store.dayInjuries || {}) };
+    const isNoInjury = Array.isArray(injuries) && injuries[0] === "__none__";
     if (!injuries?.length) { delete updated[key]; } else { updated[key] = injuries; }
     // Compute the actual calendar date of this day for the profile label
     const dayIdx = DAY_LABELS.indexOf(day);
@@ -2244,15 +2263,24 @@ DAY_JSON`
     d.setDate(d.getDate() + dayIdx);
     const loggedLabel = d.toLocaleDateString("en-GB", { weekday:"short", day:"numeric", month:"short" });
     const loggedDate = d.toISOString().split("T")[0];
-    // Sync to profile so AI prompts in weekly plan generation stay aware
-    const updatedProfile = { ...store.profile, injuries: injuries||[], injuriesLoggedDate: loggedDate, injuriesLoggedLabel: loggedLabel };
-    persist({ dayInjuries: updated, profile: updatedProfile });
+    // Sync profile: "no injury" clears profile injuries; specific areas update them; clear/reset leaves profile unchanged
+    if (isNoInjury) {
+      const updatedProfile = { ...store.profile, injuries: [], injuriesLoggedDate: loggedDate, injuriesLoggedLabel: loggedLabel };
+      persist({ dayInjuries: updated, profile: updatedProfile });
+    } else if (injuries?.length) {
+      const updatedProfile = { ...store.profile, injuries, injuriesLoggedDate: loggedDate, injuriesLoggedLabel: loggedLabel };
+      persist({ dayInjuries: updated, profile: updatedProfile });
+    } else {
+      persist({ dayInjuries: updated });
+    }
+    // No plan regeneration needed for "no injury" — plan stays as normal
+    if (isNoInjury || !injuries?.length) return;
     const plan = (store.weekPlans || []).find(wp => wp.weekStart === weekStart);
     if (!plan?.weekGoals) return;
     const effectiveSchedule = { ...defaultProfile.schedule, ...(store.profile.schedule||{}), ...((store.weekScheduleOverrides||{})[weekStart]||{}) };
     const type = plan.weekGoals.daySessions?.[day]?.type || effectiveSchedule[day];
     const curIntensity = (store.dayIntensity||{})[`${weekStart}_${day}`];
-    if (type && type.startsWith("run")) generateDayPlan(weekStart, day, type, curIntensity, injuries?.length ? injuries : undefined);
+    if (type && type.startsWith("run")) generateDayPlan(weekStart, day, type, curIntensity, injuries);
   }
 
   async function generateWeekPlan(weekStart) {
