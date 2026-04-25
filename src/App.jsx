@@ -939,6 +939,13 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                                 {linked.rpe&&<span>RPE {linked.rpe}/10</span>}
                                 {linked.te&&<span>TE {linked.te}</span>}
                               </div>
+                              {linked.injuries?.length>0&&(
+                                <div style={{ display:"flex",flexWrap:"wrap",gap:4,marginBottom:6 }}>
+                                  {linked.injuries.map(inj=>(
+                                    <span key={inj} style={{ fontSize:11,padding:"2px 8px",borderRadius:10,background:"#fff0ec",border:"1px solid #fcd0b0",color:"#c03800",fontWeight:600 }}>🩹 {inj}</span>
+                                  ))}
+                                </div>
+                              )}
                               {(()=>{
                                 const deltas = computePlanDeltas(linked, weekPlan, mainSet, linked.type, longRunPace);
                                 if (deltas.distDelta === null && deltas.paceDeltaSecs === null) return null;
