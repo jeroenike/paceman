@@ -663,6 +663,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
 
 function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride, raceDate, onSaveSession, longRunPace, dayIntensity, onSetDayIntensity, dayInjuries, onSetDayInjury }) {
   const [pickerDay, setPickerDay] = useState(null);
+  const [injuryPickerDay, setInjuryPickerDay] = useState(null);
   const [inlineFormDay, setInlineFormDay] = useState(null); // {day, initial} or null
   const weekStartDate = new Date(weekStart + "T00:00:00");
 
@@ -822,28 +823,50 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                             </div>
                           );
                         })()}
-                        {/* Pain area selector — run days, non-past, plan exists */}
+                        {/* Pain area selector — collapsed behind button; run days, non-past, plan exists */}
                         {isRun&&!isPast&&weekPlan&&onSetDayInjury&&(()=>{
                           const injKey = `${weekStart}_${day}`;
                           const active = dayInjuries?.[injKey] || [];
+                          const isOpen = injuryPickerDay === day;
                           function toggle(area) {
                             const next = active.includes(area) ? active.filter(a=>a!==area) : [...active,area];
                             onSetDayInjury(weekStart,day,next);
                           }
+                          function clearAll() {
+                            onSetDayInjury(weekStart,day,[]);
+                            setInjuryPickerDay(null);
+                          }
                           return (
                             <div style={{ marginTop:8 }}>
-                              <div style={{ fontSize:10,fontWeight:700,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5 }}>Pain today</div>
-                              <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
-                                {INJURY_AREAS.map(area=>{
-                                  const on = active.includes(area);
-                                  return (
-                                    <button key={area} onClick={()=>toggle(area)}
-                                      style={{ padding:"4px 9px",borderRadius:12,border:`1.5px solid ${on?"#e05020":"#e0e0dc"}`,background:on?"#fff0ec":"#fafafa",color:on?"#c03800":"#999",fontSize:11,fontWeight:on?700:400,cursor:"pointer" }}>
-                                      {area}
-                                    </button>
-                                  );
-                                })}
-                              </div>
+                              <button onClick={()=>setInjuryPickerDay(isOpen?null:day)}
+                                style={{ background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",alignItems:"center",gap:5 }}>
+                                <span style={{ fontSize:11,color:active.length?"#c03800":"#bbb" }}>🩹</span>
+                                <span style={{ fontSize:11,color:active.length?"#c03800":"#bbb",fontWeight:active.length?600:400 }}>
+                                  {active.length ? active.join(", ") : "Pain today?"}
+                                </span>
+                                <span style={{ fontSize:10,color:"#ccc" }}>{isOpen?"▴":"▾"}</span>
+                              </button>
+                              {isOpen&&(
+                                <div style={{ marginTop:7 }}>
+                                  <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
+                                    {INJURY_AREAS.map(area=>{
+                                      const on = active.includes(area);
+                                      return (
+                                        <button key={area} onClick={()=>toggle(area)}
+                                          style={{ padding:"4px 9px",borderRadius:12,border:`1.5px solid ${on?"#e05020":"#e0e0dc"}`,background:on?"#fff0ec":"#fafafa",color:on?"#c03800":"#999",fontSize:11,fontWeight:on?700:400,cursor:"pointer" }}>
+                                          {area}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  <div style={{ display:"flex",gap:10,marginTop:7 }}>
+                                    <button onClick={()=>setInjuryPickerDay(null)}
+                                      style={{ fontSize:11,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>Done</button>
+                                    {active.length>0&&<button onClick={clearAll}
+                                      style={{ fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",padding:0 }}>Clear</button>}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           );
                         })()}
