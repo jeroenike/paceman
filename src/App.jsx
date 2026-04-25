@@ -171,11 +171,13 @@ function GoalBar({ label, actual, goal, unit, higherIsBetter=false }) {
 // ── Log Form ──
 
 function LogForm({ initial, onSave, onCancel, stravaActivities, onImportStrava, stravaLoading, importedStravaIds, onBulkSave }) {
-  const [d, setD] = useState(initial || {
+  const [d, setD] = useState(()=>({
     type:"", date:new Date().toISOString().split("T")[0], time:"", location:"",
     distance:"", elevation:"",
     avgPace:"", avgHR:"", maxHR:"", cadence:"", te:"", rpe:"", notes:"",
-  });
+    injuries:[],
+    ...(initial||{}),
+  }));
   const [attempted, setAttempted] = useState(false);
   const [selected, setSelected] = useState([]);
   const set = (k,v) => setD(p=>({...p,[k]:v}));
@@ -283,6 +285,21 @@ function LogForm({ initial, onSave, onCancel, stravaActivities, onImportStrava, 
         <SectionLabel>Notes</SectionLabel>
         <textarea value={d.notes||""} onChange={e=>set("notes",e.target.value)} placeholder="How did it feel? Any issues?"
           style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:15,minHeight:80,resize:"vertical",outline:"none" }}/>
+      </div>
+
+      <div>
+        <SectionLabel>Pain areas <span style={{ fontWeight:400,color:"#bbb",fontSize:10,textTransform:"none" }}>optional</span></SectionLabel>
+        <div style={{ display:"flex",flexWrap:"wrap",gap:6 }}>
+          {INJURY_AREAS.map(area=>{
+            const on = (d.injuries||[]).includes(area);
+            return (
+              <button key={area} type="button" onClick={()=>set("injuries",on?(d.injuries||[]).filter(a=>a!==area):[...(d.injuries||[]),area])}
+                style={{ padding:"5px 11px",borderRadius:12,border:`1.5px solid ${on?"#e05020":"#e0e0dc"}`,background:on?"#fff0ec":"#fafafa",color:on?"#c03800":"#999",fontSize:12,fontWeight:on?700:400,cursor:"pointer" }}>
+                {area}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div style={{ display:"flex",gap:10 }}>
@@ -898,7 +915,7 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                             <div onClick={e=>e.stopPropagation()}>
                               <LogForm
                                 initial={inlineFormDay.initial}
-                                onSave={d=>{ onSaveSession({ id:linked.id, ...d, savedAt:new Date().toISOString() }); setInlineFormDay(null); }}
+                                onSave={d=>{ onSaveSession({ id:linked.id, ...d, savedAt:new Date().toISOString() }); if(onSetDayInjury) onSetDayInjury(weekStart,day,d.injuries||[]); setInlineFormDay(null); }}
                                 onCancel={()=>setInlineFormDay(null)}
                               />
                             </div>
@@ -967,7 +984,7 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
                       <div style={{ borderTop:"1px solid #f0f0ec",paddingTop:10 }} onClick={e=>e.stopPropagation()}>
                         <LogForm
                           initial={inlineFormDay.initial}
-                          onSave={d=>{ onSaveSession({ id:Date.now(), ...d, savedAt:new Date().toISOString() }); setInlineFormDay(null); }}
+                          onSave={d=>{ onSaveSession({ id:Date.now(), ...d, savedAt:new Date().toISOString() }); if(onSetDayInjury) onSetDayInjury(weekStart,day,d.injuries||[]); setInlineFormDay(null); }}
                           onCancel={()=>setInlineFormDay(null)}
                         />
                       </div>
@@ -1019,7 +1036,7 @@ function SessionScreen({ store, activeDay, loading, error, aiText, onBack }) {
 
 // ── Log Screen ──
 
-function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivities, onImportStrava, onSaveSession, onBulkSave, onBulkDelete, onAnalyze, editingSession, setEditingSession }) {
+function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivities, onImportStrava, onSaveSession, onBulkSave, onBulkDelete, onAnalyze, editingSession, setEditingSession, onSetDayInjury }) {
   const [successMsg, setSuccessMsg] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [analysisSessionId, setAnalysisSessionId] = useState(null);
@@ -1046,6 +1063,12 @@ function LogScreen({ store, loading, error, aiText, stravaLoading, stravaActivit
 
   function handleSave(d) {
     onSaveSession({ id:editingSession?.id||Date.now(), ...d, savedAt:new Date().toISOString() });
+    if (onSetDayInjury && d.date) {
+      const date = new Date(d.date + "T00:00:00");
+      const dayIdx = (date.getDay() + 6) % 7;
+      const ws = getWeekStart(date);
+      onSetDayInjury(ws, DAY_LABELS[dayIdx], d.injuries || []);
+    }
     setSuccessMsg(editingSession?"Session updated":"Session saved");
     setEditingSession(null); setShowForm(false);
     setTimeout(()=>setSuccessMsg(""),3000);
@@ -2310,7 +2333,7 @@ Include: exact paces, HR zones (bpm), cadence targets, rep structure, rest.`);
       <div style={{ flex:1,overflowY:"auto",display:"flex",flexDirection:"column" }}>
         {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} loadingMsg={loadingMsg} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onGenerateAllPlans={generateAllPlans} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={handleScheduleOverride} onSaveSession={saveSession} onSetDayIntensity={handleSetDayIntensity} onSetDayInjury={handleSetDayInjury}/>}
         {screen==="session"&&<SessionScreen store={store} activeDay={activeDay} loading={loading} error={error} aiText={aiText} onBack={()=>{ setScreen("home"); setAiText(""); setActiveDay(null); }}/>}
-        {screen==="log"&&<LogScreen store={store} loading={loading} error={error} aiText={aiText} stravaLoading={stravaLoading} stravaActivities={stravaActivities} onImportStrava={importFromStrava} onSaveSession={saveSession} onBulkSave={bulkSaveSessions} onBulkDelete={bulkDeleteSessions} onAnalyze={analyzeSession} editingSession={editingSession} setEditingSession={setEditingSession}/>}
+        {screen==="log"&&<LogScreen store={store} loading={loading} error={error} aiText={aiText} stravaLoading={stravaLoading} stravaActivities={stravaActivities} onImportStrava={importFromStrava} onSaveSession={saveSession} onBulkSave={bulkSaveSessions} onBulkDelete={bulkDeleteSessions} onAnalyze={analyzeSession} editingSession={editingSession} setEditingSession={setEditingSession} onSetDayInjury={handleSetDayInjury}/>}
         {screen==="progress"&&<ProgressScreen store={store}/>}
         {screen==="profile"&&<ProfileScreen store={store} persist={persist} onSaved={()=>setScreen("home")} isDevMode={isDevMode}/>}
       </div>
