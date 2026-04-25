@@ -1619,7 +1619,6 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
   const [draft, setDraft] = useState(()=>({...defaultProfile,...store.profile}));
   const set = (k,v) => setDraft(prev=>({...prev,[k]:v}));
   const setSchedule = (day,val) => setDraft(prev=>({...prev,schedule:{...prev.schedule,[day]:val}}));
-  const toggleInjury = (inj,checked) => setDraft(prev=>({...prev,injuries:checked?[...(prev.injuries||[]),inj]:(prev.injuries||[]).filter(i=>i!==inj)}));
   const [scheduleEditMode, setScheduleEditMode] = useState(false);
   const [schedulePickerDay, setSchedulePickerDay] = useState(null);
   // Race pace: auto or manual override
@@ -1750,14 +1749,26 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
         </div>
         <div>
           <SectionLabel>Injuries</SectionLabel>
-          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:6 }}>
-            {["Posterior tibial tendon","Achilles","IT band","Plantar fascia","Knee","Hip flexor"].map(inj=>(
-              <label key={inj} style={{ display:"flex",alignItems:"center",gap:8,padding:"9px 10px",fontSize:13,color:"#1a1a1a",border:"1px solid #eee",borderRadius:8,cursor:"pointer",background:(draft.injuries||[]).includes(inj)?"#f0f6ff":"#fff" }}>
-                <input type="checkbox" checked={(draft.injuries||[]).includes(inj)} onChange={e=>toggleInjury(inj,e.target.checked)} style={{ accentColor:"#1B6FE8" }}/>
-                <span style={{ fontSize:12 }}>{inj}</span>
-              </label>
-            ))}
-          </div>
+          {(()=>{
+            const logged = store.profile.injuries || [];
+            const loggedLabel = store.profile.injuriesLoggedLabel;
+            return (
+              <div style={{ padding:"10px 12px",borderRadius:8,border:"1px solid #eee",background:"#fafaf8" }}>
+                {logged.length > 0 ? (
+                  <>
+                    <div style={{ display:"flex",flexWrap:"wrap",gap:6,marginBottom:loggedLabel?6:0 }}>
+                      {logged.map(inj=>(
+                        <span key={inj} style={{ padding:"4px 9px",borderRadius:12,background:"#fff0ec",border:"1px solid #fcd0b0",color:"#c03800",fontSize:12,fontWeight:600 }}>{inj}</span>
+                      ))}
+                    </div>
+                    {loggedLabel&&<div style={{ fontSize:11,color:"#bbb" }}>Last logged: {loggedLabel}</div>}
+                  </>
+                ) : (
+                  <div style={{ fontSize:12,color:"#bbb" }}>No injuries logged — use "Pain today?" on a training day to log them.</div>
+                )}
+              </div>
+            );
+          })()}
         </div>
         <div>
           <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10 }}>
@@ -2204,7 +2215,15 @@ DAY_JSON`
     const key = `${weekStart}_${day}`;
     const updated = { ...(store.dayInjuries || {}) };
     if (!injuries?.length) { delete updated[key]; } else { updated[key] = injuries; }
-    persist({ dayInjuries: updated });
+    // Compute the actual calendar date of this day for the profile label
+    const dayIdx = DAY_LABELS.indexOf(day);
+    const d = new Date(weekStart + "T00:00:00");
+    d.setDate(d.getDate() + dayIdx);
+    const loggedLabel = d.toLocaleDateString("en-GB", { weekday:"short", day:"numeric", month:"short" });
+    const loggedDate = d.toISOString().split("T")[0];
+    // Sync to profile so AI prompts in weekly plan generation stay aware
+    const updatedProfile = { ...store.profile, injuries: injuries||[], injuriesLoggedDate: loggedDate, injuriesLoggedLabel: loggedLabel };
+    persist({ dayInjuries: updated, profile: updatedProfile });
     const plan = (store.weekPlans || []).find(wp => wp.weekStart === weekStart);
     if (!plan?.weekGoals) return;
     const effectiveSchedule = { ...defaultProfile.schedule, ...(store.profile.schedule||{}), ...((store.weekScheduleOverrides||{})[weekStart]||{}) };
