@@ -2,13 +2,14 @@ import React, { useState, useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 import AuthScreen from "./AuthScreen.jsx";
-import { supabase } from "./supabase.js";
+import { supabase, supabaseConfigured } from "./supabase.js";
 
 function Root() {
   // null = loading, false = signed out, object = session
-  const [session, setSession] = useState(null);
+  const [session, setSession] = useState(supabaseConfigured ? null : false);
 
   useEffect(() => {
+    if (!supabaseConfigured) return;
     // Get session on first load
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session ?? false);
@@ -34,9 +35,9 @@ function Root() {
     );
   }
 
-  if (!session) return <AuthScreen />;
+  if (supabaseConfigured && !session) return <AuthScreen />;
 
-  return <App session={session} />;
+  return <App session={session || null} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);

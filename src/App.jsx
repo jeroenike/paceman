@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import { supabase } from "./supabase.js";
+import { supabase, supabaseConfigured } from "./supabase.js";
 import { loadUserData, saveUserData } from "./db.js";
 import {
   DAY_LABELS, SESSION_TYPES, SESSION_COLORS, SESSION_LABELS, RACE_DISTANCES,
@@ -2518,7 +2518,7 @@ Include: exact paces, HR zones (bpm), cadence targets, rep structure, rest.`);
         {screen==="session"&&<SessionScreen store={store} activeDay={activeDay} loading={loading} error={error} aiText={aiText} onBack={()=>{ setScreen("home"); setAiText(""); setActiveDay(null); }}/>}
         {screen==="log"&&<LogScreen store={store} loading={loading} error={error} aiText={aiText} stravaLoading={stravaLoading} stravaActivities={stravaActivities} onImportStrava={importFromStrava} onSaveSession={saveSession} onBulkSave={bulkSaveSessions} onBulkDelete={bulkDeleteSessions} onAnalyze={analyzeSession} editingSession={editingSession} setEditingSession={setEditingSession} onSetDayInjury={handleSetDayInjury}/>}
         {screen==="progress"&&<ProgressScreen store={store}/>}
-        {screen==="profile"&&<ProfileScreen store={store} persist={persist} onSaved={()=>setScreen("home")} isDevMode={isDevMode} onSignOut={()=>supabase.auth.signOut()}/>}
+        {screen==="profile"&&<ProfileScreen store={store} persist={persist} onSaved={()=>setScreen("home")} isDevMode={isDevMode} onSignOut={supabaseConfigured ? ()=>supabase.auth.signOut() : null}/>}
       </div>
       <NavBar screen={screen} onNav={handleNav}/>
     </div>
