@@ -1,4 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { supabase } from "./supabase.js";
+import { loadUserData, saveUserData } from "./db.js";
 import {
   DAY_LABELS, SESSION_TYPES, SESSION_COLORS, SESSION_LABELS, RACE_DISTANCES,
   parsePace, secsTopace, computeRacePace, computeGoalTime, computeTrainingPaces,
@@ -1734,7 +1736,7 @@ function ProgressScreen({ store }) {
 
 // ── Profile Screen ──
 
-function ProfileScreen({ store, persist, onSaved, isDevMode }) {
+function ProfileScreen({ store, persist, onSaved, isDevMode, onSignOut }) {
   const [draft, setDraft] = useState(()=>({...defaultProfile,...store.profile}));
   const set = (k,v) => setDraft(prev=>({...prev,[k]:v}));
   const setSchedule = (day,val) => setDraft(prev=>({...prev,schedule:{...prev.schedule,[day]:val}}));
@@ -1953,6 +1955,12 @@ function ProfileScreen({ store, persist, onSaved, isDevMode }) {
             Clear history
           </button>
         )}
+        {onSignOut&&(
+          <button onClick={()=>{ if(window.confirm("Sign out?")) onSignOut(); }}
+            style={{ padding:12,borderRadius:10,background:"none",color:"#888",border:"1px solid #e0e0dc",fontSize:14,cursor:"pointer" }}>
+            Sign out
+          </button>
+        )}
         {isDevMode&&(
           <div style={{ marginTop:24,borderTop:"1px dashed #e0e0e0",paddingTop:20 }}>
             <div style={{ fontSize:11,color:"#bbb",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10 }}>
@@ -2008,7 +2016,7 @@ function NavBar({ screen, onNav }) {
 
 // ── Main App ──
 
-export default function App() {
+export default function App({ session }) {
   const [store, setStore] = useState(()=>{
     const s = { profile:defaultProfile, sessions:[], weekPlans:[], strava:null, weekScheduleOverrides:{}, ...loadStore() };
     // Migrate legacy single weekPlan → weekPlans array
@@ -2029,10 +2037,49 @@ export default function App() {
   const [stravaLoading, setStravaLoading] = useState(false);
   const [stravaActivities, setStravaActivities] = useState([]);
   const [editingSession, setEditingSession] = useState(null);
+  const [dbLoaded, setDbLoaded] = useState(false);
+  const [migrated, setMigrated] = useState(false);
+  const dbWriteTimer = useRef(null);
+
+  // Phase 2: load from DB on mount; DB is authoritative when a row exists
+  useEffect(() => {
+    if (!session?.user?.id) { setDbLoaded(true); return; }
+    loadUserData(session.user.id).then(dbData => {
+      if (dbData) {
+        // DB row exists — merge with defaults and use as the store
+        const merged = { profile:defaultProfile, sessions:[], weekPlans:[], strava:null, weekScheduleOverrides:{}, ...dbData };
+        if (merged.weekPlan && !merged.weekPlans?.length) merged.weekPlans = [merged.weekPlan];
+        if (!merged.weekPlans) merged.weekPlans = [];
+        delete merged.weekPlan;
+        merged.weekPlans = merged.weekPlans.map(p => { const { content:_, ...r } = p; return r; });
+        if (!merged.dayIntensity) merged.dayIntensity = {};
+        if (!merged.dayInjuries) merged.dayInjuries = {};
+        if (!merged.weekScheduleOverrides) merged.weekScheduleOverrides = {};
+        setStore(merged);
+        saveStore(merged);
+      } else {
+        // No DB row yet — first login; the existing localStorage data will be written on next persist()
+        const hasLocalData = !!loadStore()?.profile?.name;
+        if (hasLocalData) setMigrated(true);
+      }
+      setDbLoaded(true);
+    }).catch(() => setDbLoaded(true));
+  }, [session?.user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const persist = useCallback((updates) => {
-    setStore(prev=>{ const next={...prev,...updates}; saveStore(next); return next; });
-  }, []);
+    setStore(prev => {
+      const next = { ...prev, ...updates };
+      saveStore(next);
+      // Debounced DB write — batches rapid updates (e.g. generateAllPlans loop)
+      if (session?.user?.id) {
+        clearTimeout(dbWriteTimer.current);
+        dbWriteTimer.current = setTimeout(() => {
+          saveUserData(session.user.id, next).catch(console.error);
+        }, 500);
+      }
+      return next;
+    });
+  }, [session?.user?.id]);
 
   const hasProfile = store.profile?.name && store.profile?.goal;
   const today = DAY_LABELS[new Date().getDay()===0?6:new Date().getDay()-1];
@@ -2449,14 +2496,29 @@ Include: exact paces, HR zones (bpm), cadence targets, rep structure, rest.`);
     if (id!=="log") setEditingSession(null);
   }
 
+  // Wait for DB load before rendering — prevents flash of stale localStorage data
+  if (!dbLoaded) {
+    return (
+      <div style={{ maxWidth:430,margin:"0 auto",minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#fff" }}>
+        <Dots />
+      </div>
+    );
+  }
+
   return (
     <div style={{ maxWidth:430,margin:"0 auto",minHeight:"100vh",display:"flex",flexDirection:"column",background:"#fff" }}>
       <div style={{ flex:1,overflowY:"auto",display:"flex",flexDirection:"column" }}>
+        {migrated&&(
+          <div style={{ margin:"12px 16px 0",padding:"10px 14px",borderRadius:10,background:"#e8f8f0",border:"1px solid #b0e8cc",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+            <span style={{ fontSize:13,color:"#0a6640",fontWeight:600 }}>✓ Your training data is now backed up to the cloud</span>
+            <button onClick={()=>setMigrated(false)} style={{ background:"none",border:"none",color:"#0a6640",cursor:"pointer",fontSize:18,padding:0,lineHeight:1 }}>×</button>
+          </div>
+        )}
         {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} loadingMsg={loadingMsg} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onGenerateAllPlans={generateAllPlans} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={handleScheduleOverride} onSaveSession={saveSession} onSetDayIntensity={handleSetDayIntensity} onSetDayInjury={handleSetDayInjury}/>}
         {screen==="session"&&<SessionScreen store={store} activeDay={activeDay} loading={loading} error={error} aiText={aiText} onBack={()=>{ setScreen("home"); setAiText(""); setActiveDay(null); }}/>}
         {screen==="log"&&<LogScreen store={store} loading={loading} error={error} aiText={aiText} stravaLoading={stravaLoading} stravaActivities={stravaActivities} onImportStrava={importFromStrava} onSaveSession={saveSession} onBulkSave={bulkSaveSessions} onBulkDelete={bulkDeleteSessions} onAnalyze={analyzeSession} editingSession={editingSession} setEditingSession={setEditingSession} onSetDayInjury={handleSetDayInjury}/>}
         {screen==="progress"&&<ProgressScreen store={store}/>}
-        {screen==="profile"&&<ProfileScreen store={store} persist={persist} onSaved={()=>setScreen("home")} isDevMode={isDevMode}/>}
+        {screen==="profile"&&<ProfileScreen store={store} persist={persist} onSaved={()=>setScreen("home")} isDevMode={isDevMode} onSignOut={()=>supabase.auth.signOut()}/>}
       </div>
       <NavBar screen={screen} onNav={handleNav}/>
     </div>
