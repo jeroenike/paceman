@@ -7,6 +7,7 @@ const buildDate = new Date().toLocaleDateString("en-GB", { day:"numeric", month:
 
 export default defineConfig({
   plugins: [react()],
+  envPrefix: ['VITE_', 'SUPABASE_'],
   define: { __APP_VERSION__: JSON.stringify(`${version} · ${buildDate}`) },
   build: { outDir: 'dist' },
   test: {
