@@ -386,10 +386,12 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate, r
 
   // Next race week = first upcoming race week
   const today = new Date().toISOString().split("T")[0];
-  const nextRaceEntry = allRaceDates
+  const upcomingRaceEntries = allRaceDates
     .filter(r => r.date >= today)
-    .sort((a,b) => a.date.localeCompare(b.date))[0];
-  const nextRaceWeekStart = nextRaceEntry ? getWeekStart(new Date(nextRaceEntry.date + "T00:00:00")) : null;
+    .sort((a,b) => a.date.localeCompare(b.date));
+  // Pin the LAST upcoming race week on the right (furthest horizon) — keeps chronological order
+  const lastRaceEntry = upcomingRaceEntries[upcomingRaceEntries.length - 1] || null;
+  const pinnedRaceWeekStart = lastRaceEntry ? getWeekStart(new Date(lastRaceEntry.date + "T00:00:00")) : null;
 
   useEffect(() => {
     if (activeRef.current && stripRef.current) {
@@ -447,17 +449,17 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate, r
     );
   }
 
-  // Pin the next race week on the right; all other weeks scrollable
-  const scrollableWeeks = nextRaceWeekStart ? weeks.filter(ws => ws !== nextRaceWeekStart) : weeks;
+  // Pin the last (furthest) race week on the right; all other weeks scrollable in order
+  const scrollableWeeks = pinnedRaceWeekStart ? weeks.sort().filter(ws => ws !== pinnedRaceWeekStart) : weeks.sort();
 
   return (
     <div style={{ display:"flex",alignItems:"stretch",gap:0,padding:"4px 0 10px" }}>
       <div ref={stripRef} style={{ flex:1,display:"flex",gap:6,overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch" }}>
         {scrollableWeeks.map(ws => renderChip(ws))}
       </div>
-      {nextRaceWeekStart&&(
+      {pinnedRaceWeekStart&&(
         <div style={{ flexShrink:0,borderLeft:"2px solid #f0f0ec",paddingLeft:6,display:"flex",alignItems:"center" }}>
-          {renderChip(nextRaceWeekStart)}
+          {renderChip(pinnedRaceWeekStart)}
         </div>
       )}
     </div>
