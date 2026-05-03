@@ -731,7 +731,8 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
         scheduleEdit={scheduleEdit}
         weekScheduleOverrides={store.weekScheduleOverrides||{}}
         onSaveScheduleOverride={onSaveScheduleOverride}
-        raceDate={store.profile.goalDate}
+        raceDate={getAllRaces(store.profile).filter(r=>r.goalDate).map(r=>r.goalDate).sort().slice(-1)[0] || store.profile.goalDate}
+        raceDates={new Set(getAllRaces(store.profile).filter(r=>r.goalDate).map(r=>r.goalDate))}
         onSaveSession={onSaveSession}
         longRunPace={effectiveLongRunPace}
         dayIntensity={store.dayIntensity||{}}
@@ -745,7 +746,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
 
 // ── Week Day List ──
 
-function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride, raceDate, onSaveSession, longRunPace, dayIntensity, onSetDayIntensity, dayInjuries, onSetDayInjury }) {
+function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPlan, scheduleEdit, weekScheduleOverrides, onSaveScheduleOverride, raceDate, raceDates, onSaveSession, longRunPace, dayIntensity, onSetDayIntensity, dayInjuries, onSetDayInjury }) {
   const [pickerDay, setPickerDay] = useState(null);
   const [injuryPickerDay, setInjuryPickerDay] = useState(null);
   const [inlineFormDay, setInlineFormDay] = useState(null); // {day, initial} or null
@@ -778,8 +779,9 @@ function WeekDayList({ schedule, daySessions, today, weekStart, sessions, weekPl
 
         if (raceDate && dayDateStr > raceDate) return null;
 
-        // Race day — special celebratory card
-        if (raceDate && dayDateStr === raceDate) {
+        // Race day — special celebratory card (any of the user's races)
+        const isRaceDay = raceDates ? raceDates.has(dayDateStr) : (raceDate && dayDateStr === raceDate);
+        if (isRaceDay) {
           const isToday = dayDateStr === todayStr;
           return (
             <div key={day} style={{ borderRadius:10,overflow:"hidden",border:"2px solid #e8a020",background:"linear-gradient(135deg,#fff8ed 0%,#fff3d6 100%)" }}>
