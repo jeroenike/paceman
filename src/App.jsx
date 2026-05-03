@@ -55,9 +55,27 @@ function profileTrainingPaces(p) {
 
 const defaultProfile = {
   name:"", goal:"", goalCustom:"", goalCustomDist:"", goalDate:"", goalTime:"", garminPredicted:"", racePace:"",
-  easyHR:"", experience:"", injuries:[],
+  easyHR:"", experience:"", injuries:[], races:[],
   schedule:{ Mon:"rest", Tue:"run_threshold", Wed:"crossfit", Thu:"run_easy", Fri:"crossfit", Sat:"crossfit", Sun:"run_long" },
 };
+
+function getAllRaces(profile) {
+  if (profile?.races?.length > 0) return profile.races;
+  if (profile?.goal || profile?.goalDate) {
+    return [{ id:"legacy", name:"",
+      goal:profile.goal||"", goalCustom:profile.goalCustom||"", goalCustomDist:profile.goalCustomDist||"",
+      goalDate:profile.goalDate||"", goalTime:profile.goalTime||"",
+      racePace:profile.racePace||"", garminPredicted:profile.garminPredicted||"" }];
+  }
+  return [];
+}
+
+function getNextRace(profile) {
+  const today = new Date().toISOString().split("T")[0];
+  return getAllRaces(profile)
+    .filter(r => r.goalDate && r.goalDate >= today)
+    .sort((a,b) => a.goalDate.localeCompare(b.goalDate))[0] || null;
+}
 
 function loadStore() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; } }
 function saveStore(d) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} }
@@ -360,17 +378,34 @@ function LogForm({ initial, onSave, onCancel, stravaActivities, onImportStrava, 
 
 // ── Week Strip ──
 
-function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate }) {
+function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate, raceDates }) {
   const stripRef = useRef(null);
   const activeRef = useRef(null);
   const weeks = [];
   const cur = new Date(getCurrentWeekStart() + "T00:00:00");
   const from = new Date(cur); from.setDate(from.getDate() - 42);
   const to = new Date(cur); to.setDate(to.getDate() + 56);
-  const raceWeekStart = raceDate ? getWeekStart(new Date(raceDate + "T00:00:00")) : null;
-  if (raceDate) { const rd = new Date(raceDate + "T00:00:00"); to.setTime(rd.getTime()); }
+
+  // Support both single raceDate (legacy) and raceDates array
+  const allRaceDates = raceDates?.length > 0 ? raceDates : raceDate ? [{ date: raceDate }] : [];
+
+  // Extend window to cover all race dates
+  allRaceDates.forEach(r => {
+    const rd = new Date(r.date + "T00:00:00");
+    if (rd > to) to.setTime(rd.getTime());
+  });
+
   for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 7)) weeks.push(getWeekStart(d));
-  if (raceWeekStart && !weeks.includes(raceWeekStart)) weeks.push(raceWeekStart);
+
+  const raceWeekStarts = new Set(allRaceDates.map(r => getWeekStart(new Date(r.date + "T00:00:00"))));
+  raceWeekStarts.forEach(rws => { if (!weeks.includes(rws)) weeks.push(rws); });
+
+  // Next race week = first upcoming race week
+  const today = new Date().toISOString().split("T")[0];
+  const nextRaceEntry = allRaceDates
+    .filter(r => r.date >= today)
+    .sort((a,b) => a.date.localeCompare(b.date))[0];
+  const nextRaceWeekStart = nextRaceEntry ? getWeekStart(new Date(nextRaceEntry.date + "T00:00:00")) : null;
 
   useEffect(() => {
     if (activeRef.current && stripRef.current) {
@@ -399,7 +434,7 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
       ? (sessions||[]).filter(s => sessionInWeek(s, ws) && s.type?.startsWith("run") && parseFloat(s.distance||"") > 0)
       : [];
     const isCurrentWeek = ws===getCurrentWeekStart();
-    const isRaceWeek = raceWeekStart && ws===raceWeekStart;
+    const isRaceWeek = raceWeekStarts.has(ws);
     const chipBorder = isActive?"#1B6FE8":isRaceWeek?"#e8a020":isCurrentWeek?"#93b8f5":"#eee";
     const chipBg = isActive?"#f0f6ff":isRaceWeek?"#fff8ed":isCurrentWeek?"#f5f8ff":"#fff";
     const labelColor = isActive?"#1B6FE8":isRaceWeek?"#c07000":isCurrentWeek?"#4a85d4":"#888";
@@ -428,16 +463,17 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
     );
   }
 
-  const scrollableWeeks = raceWeekStart ? weeks.filter(ws => ws !== raceWeekStart) : weeks;
+  // Pin the next race week on the right; all other weeks scrollable
+  const scrollableWeeks = nextRaceWeekStart ? weeks.filter(ws => ws !== nextRaceWeekStart) : weeks;
 
   return (
     <div style={{ display:"flex",alignItems:"stretch",gap:0,padding:"4px 0 10px" }}>
       <div ref={stripRef} style={{ flex:1,display:"flex",gap:6,overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch" }}>
         {scrollableWeeks.map(ws => renderChip(ws))}
       </div>
-      {raceWeekStart&&(
+      {nextRaceWeekStart&&(
         <div style={{ flexShrink:0,borderLeft:"2px solid #f0f0ec",paddingLeft:6,display:"flex",alignItems:"center" }}>
-          {renderChip(raceWeekStart)}
+          {renderChip(nextRaceWeekStart)}
         </div>
       )}
     </div>
@@ -609,7 +645,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
       </div>
 
       {/* Week strip */}
-      <WeekStrip weekPlans={store.weekPlans} sessions={store.sessions} activeWeekStart={activeWeekStart} onSelect={setActiveWeekStart} raceDate={store.profile.goalDate}/>
+      <WeekStrip weekPlans={store.weekPlans} sessions={store.sessions} activeWeekStart={activeWeekStart} onSelect={setActiveWeekStart} raceDate={store.profile.goalDate} raceDates={getAllRaces(store.profile).filter(r=>r.goalDate).map(r=>({ date:r.goalDate, name:r.name||(r.goal==="Custom..."?r.goalCustom:r.goal) }))}/>
 
       {/* Arrow nav + week label */}
       {(()=>{ const currentWeekStart=getCurrentWeekStart(); return (
@@ -1405,9 +1441,14 @@ function ProgressScreen({ store }) {
 
   // ── Goal Summary Card ──
   function GoalSummary() {
+    const todayStr = new Date().toISOString().split("T")[0];
+    const upcomingRaces = getAllRaces(p)
+      .filter(r => r.goalDate)
+      .sort((a,b) => a.goalDate.localeCompare(b.goalDate));
+    const laterRaces = upcomingRaces.filter(r => r.goalDate > todayStr && r.goalDate !== goalDate);
     return (
       <div style={{ padding:14,borderRadius:12,background:"#f0f6ff",border:"1.5px solid #1B6FE833",marginBottom:16 }}>
-        <div style={{ fontSize:11,color:"#1B6FE8",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8 }}>Race goal</div>
+        <div style={{ fontSize:11,color:"#1B6FE8",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8 }}>Next race</div>
         {noProfile ? (
           <div style={{ fontSize:13,color:"#888" }}>Set your goal in Profile to track progress here.</div>
         ) : (
@@ -1436,6 +1477,21 @@ function ProgressScreen({ store }) {
                     ? `${secsTopace(paceImprovement)} faster since first run`
                     : `${secsTopace(Math.abs(paceImprovement))} slower than first run`}
                 </span>
+              </div>
+            )}
+            {laterRaces.length > 0 && (
+              <div style={{ marginTop:12,borderTop:"1px solid #1B6FE822",paddingTop:10 }}>
+                <div style={{ fontSize:10,color:"#1B6FE8",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6 }}>Upcoming races</div>
+                {laterRaces.map(r => {
+                  const rLabel = r.name || (r.goal==="Custom..."?r.goalCustom:r.goal);
+                  const rDays = Math.ceil((new Date(r.goalDate)-new Date())/(1000*60*60*24));
+                  return (
+                    <div key={r.id||r.goalDate} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:13,color:"#555",padding:"4px 0",borderBottom:"1px solid #1B6FE811" }}>
+                      <span style={{ fontWeight:500 }}>{rLabel}</span>
+                      <span style={{ color:"#aaa",fontSize:12 }}>{new Date(r.goalDate).toLocaleDateString("en-AU",{day:"numeric",month:"short"})} · {rDays}d</span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </>
@@ -1742,18 +1798,66 @@ function ProfileScreen({ store, persist, onSaved, isDevMode, onSignOut }) {
   const setSchedule = (day,val) => setDraft(prev=>({...prev,schedule:{...prev.schedule,[day]:val}}));
   const [scheduleEditMode, setScheduleEditMode] = useState(false);
   const [schedulePickerDay, setSchedulePickerDay] = useState(null);
-  // Race pace: auto or manual override
-  const autoRacePace = computeRacePace(draft.goal, draft.goalTime);
-  const [racePaceOverride, setRacePaceOverride] = useState(()=>{
-    // Start in override mode only if a manual value exists that differs from computed
-    const auto = computeRacePace(store.profile.goal, store.profile.goalTime);
-    return !!(store.profile.racePace && store.profile.racePace !== auto);
+
+  // Multi-race management
+  const [draftRaces, setDraftRaces] = useState(() => {
+    if (store.profile.races?.length > 0) return store.profile.races;
+    // Auto-migrate legacy flat fields to races array
+    if (store.profile.goal || store.profile.goalDate) {
+      return [{ id:String(Date.now()), name:"",
+        goal:store.profile.goal||"", goalCustom:store.profile.goalCustom||"",
+        goalCustomDist:store.profile.goalCustomDist||"", goalDate:store.profile.goalDate||"",
+        goalTime:store.profile.goalTime||"", racePace:store.profile.racePace||"",
+        garminPredicted:store.profile.garminPredicted||"" }];
+    }
+    return [];
   });
-  // Training paces: derived from Garmin predicted time (current fitness) or goal time (fallback)
-  const fitnessPaceSource = draft.garminPredicted ? "predicted" : "goal";
-  const fitnessPaceSecs = parsePace(
-    computeRacePace(draft.goal, draft.garminPredicted || draft.goalTime)
-  );
+  const [editingRaceIdx, setEditingRaceIdx] = useState(null); // null = list; "new" = adding
+  const [raceEdit, setRaceEdit] = useState(null);
+  const [raceEditPaceOverride, setRaceEditPaceOverride] = useState(false);
+
+  const todayStr = new Date().toISOString().split("T")[0];
+  const nextRaceInDraft = draftRaces
+    .filter(r => r.goalDate && r.goalDate >= todayStr)
+    .sort((a,b) => a.goalDate.localeCompare(b.goalDate))[0] || null;
+
+  function openAddRace() {
+    setRaceEdit({ id:String(Date.now()), name:"", goal:"", goalCustom:"", goalCustomDist:"", goalDate:"", goalTime:"", racePace:"", garminPredicted:"" });
+    setRaceEditPaceOverride(false);
+    setEditingRaceIdx("new");
+  }
+
+  function openEditRace(idx) {
+    const r = { ...draftRaces[idx] };
+    const autoP = computeRacePace(r.goal, r.goalTime);
+    setRaceEditPaceOverride(!!(r.racePace && r.racePace !== autoP));
+    setRaceEdit(r);
+    setEditingRaceIdx(idx);
+  }
+
+  function saveRaceEdit() {
+    let toSave = { ...raceEdit };
+    const autoP = computeRacePace(toSave.goal, toSave.goalTime);
+    if (!raceEditPaceOverride && autoP) toSave.racePace = autoP;
+    if (raceEditPaceOverride) { const gt = computeGoalTime(toSave.goal, toSave.racePace); if (gt) toSave.goalTime = gt; }
+    if (editingRaceIdx === "new") {
+      setDraftRaces(prev => [...prev, toSave]);
+    } else {
+      setDraftRaces(prev => prev.map((r,i) => i === editingRaceIdx ? toSave : r));
+    }
+    setEditingRaceIdx(null);
+    setRaceEdit(null);
+  }
+
+  function deleteRace(idx) {
+    setDraftRaces(prev => prev.filter((_,i) => i !== idx));
+  }
+
+  // Training paces derived from next race in draft
+  const fitnessPaceSource = (nextRaceInDraft?.garminPredicted) ? "predicted" : "goal";
+  const fitnessPaceSecs = nextRaceInDraft
+    ? parsePace(computeRacePace(nextRaceInDraft.goal, nextRaceInDraft.garminPredicted || nextRaceInDraft.goalTime))
+    : null;
   const autoTrainingPaces = computeTrainingPaces(fitnessPaceSecs);
 
   return (
@@ -1764,99 +1868,174 @@ function ProfileScreen({ store, persist, onSaved, isDevMode, onSignOut }) {
       </div>
       <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
         <Field label="Name" value={draft.name} onChange={v=>set("name",v)} placeholder="Your name"/>
-        <div>
-          <SectionLabel>Race goal</SectionLabel>
-          <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:draft.goal==="Custom..."?10:0 }}>
-            {RACE_GOALS.map(g=>(
-              <button key={g} onClick={()=>{
-                set("goal",g);
-                // Clear garminPredicted when switching to a goal it doesn't apply to
-                if (!["5km","10km","Half Marathon","Marathon"].includes(g)) set("garminPredicted","");
-              }}
-                style={{ padding:"10px 6px",borderRadius:8,border:`1.5px solid ${draft.goal===g?"#1B6FE8":"#eee"}`,background:draft.goal===g?"#f0f6ff":"#fff",color:draft.goal===g?"#1B6FE8":"#1a1a1a",fontSize:13,fontWeight:draft.goal===g?700:400,cursor:"pointer" }}>
-                {g}
-              </button>
-            ))}
-          </div>
-          {draft.goal==="Custom..."&&(
-            <div style={{ display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"end" }}>
-              <Field label="Custom goal" value={draft.goalCustom} onChange={v=>set("goalCustom",v)} placeholder="e.g. 6 Foot Track"/>
-              <div>
-                <label style={{ fontSize:11,fontWeight:700,color:"#888",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>Distance (km)</label>
-                <input type="number" min="1" max="500" step="0.1"
-                  value={draft.goalCustomDist||""} onChange={e=>set("goalCustomDist",e.target.value)}
-                  placeholder="53"
-                  style={{ width:72,padding:"11px 10px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
-              </div>
-            </div>
-          )}
-        </div>
-        <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
-          {/* Goal time — editable when time is source; read-only (derived from pace) when pace is source */}
+
+        {/* ── Races section ── */}
+        {editingRaceIdx === null ? (
           <div>
-            <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>Goal time</label>
-            {racePaceOverride && computeGoalTime(draft.goal, draft.racePace) ? (
-              <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#f8f8f6" }}>
-                <span style={{ fontSize:15,color:"#1a1a1a",fontWeight:600 }}>{computeGoalTime(draft.goal, draft.racePace)}</span>
-                <button onClick={()=>{ set("racePace",""); setRacePaceOverride(false); }}
-                  style={{ fontSize:11,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>Edit</button>
-              </div>
-            ) : (
-              <input value={draft.goalTime} onChange={e=>set("goalTime",e.target.value)} placeholder="e.g. 1:45:00" inputMode="text"
-                style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
+            <SectionLabel>Races</SectionLabel>
+            {draftRaces.length === 0 && (
+              <div style={{ fontSize:13,color:"#aaa",padding:"8px 0 10px" }}>No races added yet.</div>
             )}
+            {draftRaces
+              .slice()
+              .sort((a,b) => (a.goalDate||"").localeCompare(b.goalDate||""))
+              .map((r) => {
+                const origIdx = draftRaces.indexOf(r);
+                const isNext = nextRaceInDraft?.id === r.id;
+                const isPast = r.goalDate && r.goalDate < todayStr;
+                const raceLabel = r.goal === "Custom..." ? (r.goalCustom||"Custom") : r.goal;
+                return (
+                  <div key={r.id} style={{ padding:"10px 12px",borderRadius:8,border:`1px solid ${isNext?"#e8a020":isPast?"#eee":"#e0e0dc"}`,background:isNext?"#fff8ed":isPast?"#f9f9f9":"#fafaf8",marginBottom:8,opacity:isPast?0.65:1 }}>
+                    <div style={{ display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8 }}>
+                      <div style={{ flex:1,minWidth:0 }}>
+                        {r.name && <div style={{ fontSize:13,fontWeight:700,color:"#1a1a1a",marginBottom:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{r.name}</div>}
+                        <div style={{ fontSize:13,color:r.name?"#666":"#1a1a1a",fontWeight:r.name?400:600 }}>{raceLabel||"Goal not set"}{r.goalTime ? <span style={{ fontWeight:400,color:"#aaa" }}> · {r.goalTime}</span> : null}</div>
+                        {r.goalDate && <div style={{ fontSize:12,color:"#aaa",marginTop:2 }}>{new Date(r.goalDate).toLocaleDateString("en-AU",{day:"numeric",month:"long",year:"numeric"})}{isPast?" · Past":""}</div>}
+                      </div>
+                      <div style={{ display:"flex",alignItems:"center",gap:6,flexShrink:0 }}>
+                        {isNext && <span style={{ fontSize:9,fontWeight:700,color:"#c07000",padding:"2px 5px",borderRadius:4,background:"#fff8ed",border:"1px solid #e8a020",whiteSpace:"nowrap" }}>NEXT</span>}
+                        <button onClick={()=>openEditRace(origIdx)} style={{ fontSize:12,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:"2px 4px" }}>Edit</button>
+                        <button onClick={()=>deleteRace(origIdx)} style={{ fontSize:14,color:"#bbb",background:"none",border:"none",cursor:"pointer",padding:"2px 4px",lineHeight:1 }}>×</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            <button onClick={openAddRace}
+              style={{ width:"100%",padding:"9px 12px",borderRadius:8,border:"1.5px dashed #1B6FE866",background:"none",color:"#1B6FE8",fontSize:13,fontWeight:600,cursor:"pointer" }}>
+              + Add race
+            </button>
           </div>
-          <Field label="Race date" value={draft.goalDate} onChange={v=>set("goalDate",v)} type="date"/>
-        </div>
-        <div>
-          <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>Race pace</label>
-          {!racePaceOverride && autoRacePace ? (
-            <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#f8f8f6" }}>
-              <span style={{ fontSize:15,color:"#1a1a1a",fontWeight:600 }}>{autoRacePace}/km</span>
-              <button onClick={()=>{ set("racePace",autoRacePace); setRacePaceOverride(true); }}
-                style={{ fontSize:11,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>Edit</button>
+        ) : (
+          /* ── Race editor ── */
+          <div style={{ border:"1px solid #e0e8ff",borderRadius:10,padding:14,background:"#f8faff" }}>
+            <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12 }}>
+              <div style={{ fontSize:13,fontWeight:700,color:"#1a1a1a" }}>{editingRaceIdx==="new"?"Add race":"Edit race"}</div>
+              <button onClick={()=>{ setEditingRaceIdx(null); setRaceEdit(null); }} style={{ fontSize:13,color:"#aaa",background:"none",border:"none",cursor:"pointer",padding:0 }}>Cancel</button>
             </div>
-          ) : (
-            <div>
-              <input value={draft.racePace}
-                onChange={e=>{ set("racePace",e.target.value); const gt=computeGoalTime(draft.goal,e.target.value); if(gt) set("goalTime",gt); }}
-                placeholder={autoRacePace||"5:15"} inputMode="text"
-                style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #1B6FE855",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
-              {autoRacePace && <button onClick={()=>{ set("racePace",""); setRacePaceOverride(false); }}
-                style={{ fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",marginTop:4,padding:0 }}>← Auto ({autoRacePace}/km)</button>}
-            </div>
-          )}
-        </div>
-        {["5km","10km","Half Marathon","Marathon"].includes(draft.goal) && (
-          <div>
-            <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>
-              Garmin {draft.goal} prediction <span style={{ fontWeight:400,color:"#bbb",textTransform:"none" }}>optional</span>
-            </label>
-            <input value={draft.garminPredicted} onChange={e=>set("garminPredicted",e.target.value)}
-              placeholder="e.g. 1:56:30 — sets training paces from current fitness"
-              inputMode="text"
-              style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
-            <div style={{ display:"flex",gap:8,marginTop:8 }}>
-              <div style={{ flex:1,padding:"8px 10px",borderRadius:8,background:"#f8f8f6",border:"1px solid #eee" }}>
-                <div style={{ fontSize:10,color:"#aaa",marginBottom:2 }}>Threshold</div>
-                <div style={{ fontSize:14,fontWeight:700,color:autoTrainingPaces.threshold?"#1B6FE8":"#ccc" }}>
-                  {autoTrainingPaces.threshold ? `${autoTrainingPaces.threshold}/km` : "—"}
+            <div style={{ display:"flex",flexDirection:"column",gap:10 }}>
+              <Field label="Event name" value={raceEdit.name} onChange={v=>setRaceEdit(p=>({...p,name:v}))} placeholder="e.g. Hoka Sydney Half"/>
+              <div>
+                <SectionLabel>Race type</SectionLabel>
+                <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:raceEdit.goal==="Custom..."?10:0 }}>
+                  {RACE_GOALS.map(g=>(
+                    <button key={g} onClick={()=>setRaceEdit(p=>({ ...p, goal:g, garminPredicted:["5km","10km","Half Marathon","Marathon"].includes(g)?p.garminPredicted:"" }))}
+                      style={{ padding:"10px 6px",borderRadius:8,border:`1.5px solid ${raceEdit.goal===g?"#1B6FE8":"#eee"}`,background:raceEdit.goal===g?"#f0f6ff":"#fff",color:raceEdit.goal===g?"#1B6FE8":"#1a1a1a",fontSize:13,fontWeight:raceEdit.goal===g?700:400,cursor:"pointer" }}>
+                      {g}
+                    </button>
+                  ))}
                 </div>
+                {raceEdit.goal==="Custom..."&&(
+                  <div style={{ display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"end" }}>
+                    <Field label="Custom goal" value={raceEdit.goalCustom} onChange={v=>setRaceEdit(p=>({...p,goalCustom:v}))} placeholder="e.g. 6 Foot Track"/>
+                    <div>
+                      <label style={{ fontSize:11,fontWeight:700,color:"#888",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>Distance (km)</label>
+                      <input type="number" min="1" max="500" step="0.1" value={raceEdit.goalCustomDist||""} onChange={e=>setRaceEdit(p=>({...p,goalCustomDist:e.target.value}))}
+                        placeholder="53" style={{ width:72,padding:"11px 10px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
+                    </div>
+                  </div>
+                )}
               </div>
-              <div style={{ flex:1,padding:"8px 10px",borderRadius:8,background:"#f8f8f6",border:"1px solid #eee" }}>
-                <div style={{ fontSize:10,color:"#aaa",marginBottom:2 }}>Long run</div>
-                <div style={{ fontSize:14,fontWeight:700,color:autoTrainingPaces.longRun?"#3B6D11":"#ccc" }}>
-                  {autoTrainingPaces.longRun ? `${autoTrainingPaces.longRun}/km` : "—"}
+              <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
+                <div>
+                  <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>Goal time</label>
+                  {raceEditPaceOverride && computeGoalTime(raceEdit.goal, raceEdit.racePace) ? (
+                    <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#f8f8f6" }}>
+                      <span style={{ fontSize:15,color:"#1a1a1a",fontWeight:600 }}>{computeGoalTime(raceEdit.goal, raceEdit.racePace)}</span>
+                      <button onClick={()=>{ setRaceEdit(p=>({...p,racePace:""})); setRaceEditPaceOverride(false); }} style={{ fontSize:11,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>Edit</button>
+                    </div>
+                  ) : (
+                    <input value={raceEdit.goalTime} onChange={e=>setRaceEdit(p=>({...p,goalTime:e.target.value}))} placeholder="e.g. 1:45:00" inputMode="text"
+                      style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
+                  )}
                 </div>
+                <Field label="Race date" value={raceEdit.goalDate} onChange={v=>setRaceEdit(p=>({...p,goalDate:v}))} type="date"/>
               </div>
-              <div style={{ flex:1,padding:"8px 10px",borderRadius:8,background:"#f8f8f6",border:"1px solid #eee",display:"flex",alignItems:"center",justifyContent:"center" }}>
-                <div style={{ fontSize:10,color:"#aaa",textAlign:"center",lineHeight:1.3 }}>
-                  Based on {fitnessPaceSource === "predicted" ? "predicted time" : "goal pace"}
+              <div>
+                <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>Race pace</label>
+                {(()=>{
+                  const autoRP = computeRacePace(raceEdit.goal, raceEdit.goalTime);
+                  if (!raceEditPaceOverride && autoRP) {
+                    return (
+                      <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#f8f8f6" }}>
+                        <span style={{ fontSize:15,color:"#1a1a1a",fontWeight:600 }}>{autoRP}/km</span>
+                        <button onClick={()=>{ setRaceEdit(p=>({...p,racePace:autoRP})); setRaceEditPaceOverride(true); }} style={{ fontSize:11,color:"#1B6FE8",background:"none",border:"none",cursor:"pointer",padding:0 }}>Edit</button>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div>
+                      <input value={raceEdit.racePace}
+                        onChange={e=>{ const v=e.target.value; const gt=computeGoalTime(raceEdit.goal,v); setRaceEdit(p=>({ ...p, racePace:v, ...(gt?{goalTime:gt}:{}) })); }}
+                        placeholder={autoRP||"5:15"} inputMode="text"
+                        style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #1B6FE855",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
+                      {autoRP && <button onClick={()=>{ setRaceEdit(p=>({...p,racePace:""})); setRaceEditPaceOverride(false); }} style={{ fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",marginTop:4,padding:0 }}>← Auto ({autoRP}/km)</button>}
+                    </div>
+                  );
+                })()}
+              </div>
+              {["5km","10km","Half Marathon","Marathon"].includes(raceEdit.goal) && (
+                <div>
+                  <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>
+                    Garmin {raceEdit.goal} prediction <span style={{ fontWeight:400,color:"#bbb",textTransform:"none" }}>optional</span>
+                  </label>
+                  <input value={raceEdit.garminPredicted} onChange={e=>setRaceEdit(p=>({...p,garminPredicted:e.target.value}))}
+                    placeholder="e.g. 1:56:30 — sets training paces from current fitness" inputMode="text"
+                    style={{ width:"100%",padding:"11px 12px",borderRadius:8,border:"1px solid #e0e0dc",background:"#fff",color:"#1a1a1a",fontSize:15,outline:"none",boxSizing:"border-box" }}/>
+                  {(()=>{
+                    const re = raceEdit;
+                    const fpSecs = parsePace(computeRacePace(re.goal, re.garminPredicted || re.goalTime));
+                    const tp = computeTrainingPaces(fpSecs);
+                    const src = re.garminPredicted ? "predicted time" : "goal pace";
+                    return (
+                      <div style={{ display:"flex",gap:8,marginTop:8 }}>
+                        <div style={{ flex:1,padding:"8px 10px",borderRadius:8,background:"#f8f8f6",border:"1px solid #eee" }}>
+                          <div style={{ fontSize:10,color:"#aaa",marginBottom:2 }}>Threshold</div>
+                          <div style={{ fontSize:14,fontWeight:700,color:tp.threshold?"#1B6FE8":"#ccc" }}>{tp.threshold ? `${tp.threshold}/km` : "—"}</div>
+                        </div>
+                        <div style={{ flex:1,padding:"8px 10px",borderRadius:8,background:"#f8f8f6",border:"1px solid #eee" }}>
+                          <div style={{ fontSize:10,color:"#aaa",marginBottom:2 }}>Long run</div>
+                          <div style={{ fontSize:14,fontWeight:700,color:tp.longRun?"#3B6D11":"#ccc" }}>{tp.longRun ? `${tp.longRun}/km` : "—"}</div>
+                        </div>
+                        <div style={{ flex:1,padding:"8px 10px",borderRadius:8,background:"#f8f8f6",border:"1px solid #eee",display:"flex",alignItems:"center",justifyContent:"center" }}>
+                          <div style={{ fontSize:10,color:"#aaa",textAlign:"center",lineHeight:1.3 }}>Based on {src}</div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
+              )}
+              <div style={{ display:"flex",gap:8,marginTop:4 }}>
+                <button onClick={saveRaceEdit}
+                  style={{ flex:1,padding:12,borderRadius:10,background:"#1B6FE8",color:"white",border:"none",fontSize:14,fontWeight:700,cursor:"pointer" }}>
+                  {editingRaceIdx==="new"?"Add Race":"Save Race"}
+                </button>
+                <button onClick={()=>{ setEditingRaceIdx(null); setRaceEdit(null); }}
+                  style={{ padding:"12px 16px",borderRadius:10,background:"none",border:"1px solid #e0e0dc",color:"#888",fontSize:14,cursor:"pointer" }}>
+                  Cancel
+                </button>
               </div>
             </div>
           </div>
         )}
+
+        {/* Training paces preview (derived from next race) */}
+        {nextRaceInDraft && ["5km","10km","Half Marathon","Marathon"].includes(nextRaceInDraft.goal) && editingRaceIdx === null && autoTrainingPaces.threshold && (
+          <div style={{ padding:"10px 12px",borderRadius:8,background:"#f8f8f6",border:"1px solid #eee" }}>
+            <div style={{ fontSize:10,color:"#aaa",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6 }}>Training paces · {nextRaceInDraft.name||nextRaceInDraft.goal} <span style={{ fontWeight:400,textTransform:"none" }}>({fitnessPaceSource==="predicted"?"from Garmin prediction":"from goal pace"})</span></div>
+            <div style={{ display:"flex",gap:8 }}>
+              <div style={{ flex:1,padding:"8px 10px",borderRadius:8,background:"#fff",border:"1px solid #eee" }}>
+                <div style={{ fontSize:10,color:"#aaa",marginBottom:2 }}>Threshold</div>
+                <div style={{ fontSize:14,fontWeight:700,color:"#1B6FE8" }}>{autoTrainingPaces.threshold}/km</div>
+              </div>
+              <div style={{ flex:1,padding:"8px 10px",borderRadius:8,background:"#fff",border:"1px solid #eee" }}>
+                <div style={{ fontSize:10,color:"#aaa",marginBottom:2 }}>Long run</div>
+                <div style={{ fontSize:14,fontWeight:700,color:"#3B6D11" }}>{autoTrainingPaces.longRun}/km</div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <Field label="Easy HR (bpm)" value={draft.easyHR} onChange={v=>set("easyHR",v)} placeholder="130-140"/>
         <div>
           <SectionLabel>Experience</SectionLabel>
@@ -1941,9 +2120,20 @@ function ProfileScreen({ store, persist, onSaved, isDevMode, onSignOut }) {
           })}
         </div>
         <button onClick={()=>{
-          const toSave = {...draft};
-          if (!racePaceOverride && autoRacePace) toSave.racePace = autoRacePace;
-          if (racePaceOverride) { const gt=computeGoalTime(draft.goal,draft.racePace); if(gt) toSave.goalTime=gt; }
+          const toSave = { ...draft, races: draftRaces };
+          // Sync flat profile fields from the next upcoming race so all existing plan/progress logic still works
+          const nr = draftRaces
+            .filter(r => r.goalDate && r.goalDate >= todayStr)
+            .sort((a,b) => a.goalDate.localeCompare(b.goalDate))[0] || null;
+          if (nr) {
+            toSave.goal = nr.goal;
+            toSave.goalCustom = nr.goalCustom || "";
+            toSave.goalCustomDist = nr.goalCustomDist || "";
+            toSave.goalDate = nr.goalDate;
+            toSave.goalTime = nr.goalTime;
+            toSave.racePace = nr.racePace || computeRacePace(nr.goal, nr.goalTime) || "";
+            toSave.garminPredicted = nr.garminPredicted || "";
+          }
           persist({profile:toSave}); onSaved();
         }}
           style={{ padding:14,borderRadius:10,background:"#1B6FE8",color:"white",border:"none",fontSize:15,fontWeight:700,cursor:"pointer" }}>
