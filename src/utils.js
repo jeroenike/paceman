@@ -430,3 +430,31 @@ export function computeRaceProjection(sessions, profile) {
     pct: Math.min(100, Math.round((goalTimeSecs / projTimeSecs) * 100)),
   };
 }
+
+// ── Multi-race helpers ────────────────────────────────────────────────────────
+
+/**
+ * Returns all races from the profile. Falls back to a synthetic single-race
+ * entry from the legacy flat fields when profile.races is empty (backward compat).
+ */
+export function getAllRaces(profile) {
+  if (profile?.races?.length > 0) return profile.races;
+  if (profile?.goal || profile?.goalDate) {
+    return [{ id:"legacy", name:"",
+      goal:profile.goal||"", goalCustom:profile.goalCustom||"",
+      goalCustomDist:profile.goalCustomDist||"", goalDate:profile.goalDate||"",
+      goalTime:profile.goalTime||"", racePace:profile.racePace||"",
+      garminPredicted:profile.garminPredicted||"" }];
+  }
+  return [];
+}
+
+/**
+ * Returns the next upcoming race (soonest goalDate >= today), or null if none.
+ */
+export function getNextRace(profile) {
+  const today = new Date().toISOString().split("T")[0];
+  return getAllRaces(profile)
+    .filter(r => r.goalDate && r.goalDate >= today)
+    .sort((a,b) => a.goalDate.localeCompare(b.goalDate))[0] || null;
+}

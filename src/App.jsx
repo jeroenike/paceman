@@ -11,6 +11,7 @@ import {
   isDayAfterRace, isDayRaceDay, isWeekInPast,
   secsToTime, computePlanDeltas, computeRaceProjection,
   normalizeInjuries, injuriesToText,
+  getAllRaces, getNextRace,
 } from "./utils.js";
 import { DEV_SEED, DEV_SEED_GREEN, DEV_SEED_ORANGE, DEV_SEED_RED } from "./dev-seed.js";
 
@@ -59,23 +60,6 @@ const defaultProfile = {
   schedule:{ Mon:"rest", Tue:"run_threshold", Wed:"crossfit", Thu:"run_easy", Fri:"crossfit", Sat:"crossfit", Sun:"run_long" },
 };
 
-function getAllRaces(profile) {
-  if (profile?.races?.length > 0) return profile.races;
-  if (profile?.goal || profile?.goalDate) {
-    return [{ id:"legacy", name:"",
-      goal:profile.goal||"", goalCustom:profile.goalCustom||"", goalCustomDist:profile.goalCustomDist||"",
-      goalDate:profile.goalDate||"", goalTime:profile.goalTime||"",
-      racePace:profile.racePace||"", garminPredicted:profile.garminPredicted||"" }];
-  }
-  return [];
-}
-
-function getNextRace(profile) {
-  const today = new Date().toISOString().split("T")[0];
-  return getAllRaces(profile)
-    .filter(r => r.goalDate && r.goalDate >= today)
-    .sort((a,b) => a.goalDate.localeCompare(b.goalDate))[0] || null;
-}
 
 function loadStore() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; } }
 function saveStore(d) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch {} }

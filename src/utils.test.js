@@ -10,6 +10,7 @@ import {
   DAY_LABELS, SESSION_LABELS, SESSION_COLORS,
   secsToTime, parseDistanceFromMainSet, computePlanDeltas, computeRaceProjection,
   deriveThresholdPace, deriveLongRunPace, normalizeInjuries, injuriesToText,
+  getAllRaces, getNextRace,
 } from "./utils.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -799,4 +800,103 @@ describe("injuriesToText", () => {
   it("returns 'none' for empty array", () => expect(injuriesToText([])).toBe("none"));
   it("returns 'none' for null", () => expect(injuriesToText(null)).toBe("none"));
   it("returns 'none' for __none__ sentinel", () => expect(injuriesToText(["__none__"])).toBe("none"));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getAllRaces — multi-race helper with legacy flat-field fallback
+// ─────────────────────────────────────────────────────────────────────────────
+describe("getAllRaces", () => {
+  it("returns the races array when present", () => {
+    const races = [{ id:"1", goal:"Half Marathon", goalDate:"2026-05-03" }];
+    expect(getAllRaces({ races })).toEqual(races);
+  });
+
+  it("returns a synthetic entry from flat fields when races is empty", () => {
+    const profile = { races:[], goal:"Marathon", goalDate:"2026-08-01", goalTime:"3:30:00", racePace:"4:59", garminPredicted:"", goalCustom:"", goalCustomDist:"" };
+    const result = getAllRaces(profile);
+    expect(result).toHaveLength(1);
+    expect(result[0].goal).toBe("Marathon");
+    expect(result[0].goalDate).toBe("2026-08-01");
+    expect(result[0].id).toBe("legacy");
+  });
+
+  it("returns a synthetic entry when races is absent and flat fields exist", () => {
+    const profile = { goal:"5km", goalDate:"2026-06-01" };
+    const result = getAllRaces(profile);
+    expect(result).toHaveLength(1);
+    expect(result[0].goal).toBe("5km");
+  });
+
+  it("returns [] for a profile with no race data at all", () => {
+    expect(getAllRaces({ name:"Test", easyHR:"140" })).toEqual([]);
+  });
+
+  it("returns [] for null profile", () => {
+    expect(getAllRaces(null)).toEqual([]);
+  });
+
+  it("prefers races array over flat fields when both are present", () => {
+    const races = [{ id:"1", goal:"Half Marathon", goalDate:"2026-05-03" }];
+    const profile = { races, goal:"Marathon", goalDate:"2026-08-01" };
+    const result = getAllRaces(profile);
+    expect(result).toHaveLength(1);
+    expect(result[0].goal).toBe("Half Marathon");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getNextRace — returns nearest upcoming race
+// ─────────────────────────────────────────────────────────────────────────────
+describe("getNextRace", () => {
+  // Use fixed future dates relative to today to avoid test fragility
+  const today = new Date();
+  const fmt = (d) => d.toISOString().split("T")[0];
+  const inDays = (n) => { const d = new Date(today); d.setDate(d.getDate() + n); return fmt(d); };
+
+  it("returns the soonest upcoming race", () => {
+    const races = [
+      { id:"1", goal:"Half Marathon", goalDate:inDays(60) },
+      { id:"2", goal:"Marathon",      goalDate:inDays(120) },
+      { id:"3", goal:"5km",           goalDate:inDays(14) },
+    ];
+    expect(getNextRace({ races })).toEqual(races[2]); // 5km in 14 days
+  });
+
+  it("ignores past races", () => {
+    const races = [
+      { id:"1", goal:"5km",           goalDate:inDays(-30) },
+      { id:"2", goal:"Half Marathon", goalDate:inDays(30) },
+    ];
+    expect(getNextRace({ races })?.id).toBe("2");
+  });
+
+  it("returns null when all races are in the past", () => {
+    const races = [{ id:"1", goal:"5km", goalDate:inDays(-10) }];
+    expect(getNextRace({ races })).toBeNull();
+  });
+
+  it("returns null for an empty races array and no flat fields", () => {
+    expect(getNextRace({ races:[] })).toBeNull();
+  });
+
+  it("returns null for null profile", () => {
+    expect(getNextRace(null)).toBeNull();
+  });
+
+  it("falls back to flat fields (legacy profile)", () => {
+    const profile = { goal:"Marathon", goalDate:inDays(100), goalTime:"3:30:00", racePace:"4:59" };
+    const result = getNextRace(profile);
+    expect(result).not.toBeNull();
+    expect(result.goal).toBe("Marathon");
+  });
+
+  it("returns null via legacy fallback when flat goalDate is in the past", () => {
+    const profile = { goal:"Marathon", goalDate:inDays(-5) };
+    expect(getNextRace(profile)).toBeNull();
+  });
+
+  it("returns a race with a goalDate exactly today", () => {
+    const races = [{ id:"1", goal:"5km", goalDate:fmt(today) }];
+    expect(getNextRace({ races })).toEqual(races[0]);
+  });
 });
