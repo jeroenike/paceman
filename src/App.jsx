@@ -2435,6 +2435,7 @@ DAY_JSON`
     const key = `${weekStart}_${day}`;
     const updated = { ...(store.dayInjuries || {}) };
     const isNoInjury = Array.isArray(injuries) && injuries[0] === "__none__";
+    const hadInjuries = Array.isArray(updated[key]) && updated[key].length > 0;
     if (!injuries?.length) { delete updated[key]; } else { updated[key] = injuries; }
     // Compute the actual calendar date of this day for the profile label
     const dayIdx = DAY_LABELS.indexOf(day);
@@ -2442,8 +2443,8 @@ DAY_JSON`
     d.setDate(d.getDate() + dayIdx);
     const loggedLabel = d.toLocaleDateString("en-GB", { weekday:"short", day:"numeric", month:"short" });
     const loggedDate = d.toISOString().split("T")[0];
-    // Sync profile: "no injury" clears profile injuries; specific areas update them; clear/reset leaves profile unchanged
-    if (isNoInjury) {
+    // Sync profile: explicit "no injury" OR clearing previously logged injuries → clear profile
+    if (isNoInjury || (!injuries?.length && hadInjuries)) {
       const updatedProfile = { ...store.profile, injuries: [], injuriesLoggedDate: loggedDate, injuriesLoggedLabel: loggedLabel };
       persist({ dayInjuries: updated, profile: updatedProfile });
     } else if (injuries?.length) {
