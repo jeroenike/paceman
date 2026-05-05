@@ -2222,12 +2222,32 @@ SCORE_JSON`);
       return `Previous week (${prevWeekPlan.weekStart}): ${g.totalDistance}km total, ${g.runsPlanned} runs, target pace ${g.targetPace||"n/a"}. Sessions: ${runDays}`;
     })() : null;
 
+    const raceDist = profileRaceDist(p);
+    const distanceGuidance = (() => {
+      if (!raceDist) return null;
+      const exp = p.experience;
+      if (raceDist >= 42) {
+        const weeklyRange = exp === "club_athlete" ? "65–90" : exp === "competitive_recreational" ? "55–75" : "45–65";
+        const longRunRange = exp === "club_athlete" ? "32–38" : exp === "competitive_recreational" ? "30–35" : "26–32";
+        return `MARATHON volume targets: weekly total ${weeklyRange}km, long run building to ${longRunRange}km peak, threshold sessions 12–18km total. Do NOT generate half-marathon-level volumes.`;
+      }
+      if (raceDist >= 21) {
+        const weeklyRange = exp === "club_athlete" ? "55–70" : exp === "competitive_recreational" ? "45–60" : "35–50";
+        const longRunRange = exp === "club_athlete" ? "20–26" : exp === "competitive_recreational" ? "18–24" : "16–20";
+        return `HALF MARATHON volume targets: weekly total ${weeklyRange}km, long run building to ${longRunRange}km peak, threshold sessions 10–14km total.`;
+      }
+      if (raceDist >= 10) {
+        return `10K volume targets: weekly total 30–55km, long run building to 14–20km peak, threshold sessions 8–12km total.`;
+      }
+      return `5K volume targets: weekly total 25–45km, long run building to 12–16km peak, threshold sessions 6–10km total.`;
+    })();
+
     const prompt = `Generate a detailed weekly training plan for week starting ${weekStart}.
 
 ${periodCtx}
 ${prevWeekSummary ? `\n${prevWeekSummary}\n` : ""}
 Athlete profile:
-- Goal: ${goalLabel}${profileRaceDist(p) ? ` (${profileRaceDist(p)}km)` : ""} in ${p.goalTime}${p.goalDate?` on ${p.goalDate}`:""}
+- Goal: ${goalLabel}${raceDist ? ` (${raceDist}km)` : ""} in ${p.goalTime}${p.goalDate?` on ${p.goalDate}`:""}
 - Level: ${p.experience}
 - Threshold pace: ${profileTrainingPaces(p).threshold}/km | Race pace: ${p.racePace}/km | Long run pace: ${profileTrainingPaces(p).longRun}/km | Easy HR: ${p.easyHR} bpm${p.garminPredicted ? ` (training paces from Garmin predicted ${p.garminPredicted})` : ""}
 - Schedule (FIXED — use exactly these session types in daySessions): ${JSON.stringify(effectiveSchedule)}
@@ -2237,7 +2257,7 @@ Recent sessions:
 ${recentSessions||"No sessions logged yet"}
 
 Coaching rules:
-- Build volume ~10% per week (unless recovery/taper week)
+${distanceGuidance ? `- ${distanceGuidance}\n` : ""}- Build volume ~10% per week (unless recovery/taper week)
 - Long run = 30–40% of weekly volume
 - Hard sessions (threshold/intervals) max 2x/week, never back-to-back
 - Easy runs at HR ${p.easyHR||"below 145"} bpm, truly conversational
