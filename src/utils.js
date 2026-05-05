@@ -3,16 +3,23 @@
 
 export const DAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 
-export const SESSION_TYPES = ["rest","run_threshold","run_easy","run_long","crossfit","run_interval"];
+export const SESSION_TYPES = ["rest","run_threshold","run_easy","run_long","run_medium_long","run_marathon_pace","crossfit","run_interval"];
 
 export const SESSION_COLORS = {
   rest:"#888780", run_threshold:"#1B6FE8", run_easy:"#0F6E56",
-  run_long:"#3B6D11", crossfit:"#993C1D", run_interval:"#7C3AED",
+  run_long:"#3B6D11", run_medium_long:"#5A8A1E", run_marathon_pace:"#C2610A",
+  crossfit:"#993C1D", run_interval:"#7C3AED",
 };
 
 export const SESSION_LABELS = {
   rest:"Rest", run_threshold:"Threshold", run_easy:"Easy Run",
-  run_long:"Long Run", crossfit:"CrossFit", run_interval:"Intervals",
+  run_long:"Long Run", run_medium_long:"Medium Long", run_marathon_pace:"Marathon Pace",
+  crossfit:"CrossFit", run_interval:"Intervals",
+};
+
+export const MARATHON_DEFAULT_SCHEDULE = {
+  Mon:"rest", Tue:"run_threshold", Wed:"run_medium_long",
+  Thu:"run_easy", Fri:"rest", Sat:"run_easy", Sun:"run_long",
 };
 
 export const RACE_DISTANCES = {
@@ -428,5 +435,35 @@ export function computeRaceProjection(sessions, profile) {
     source: "runs",
     usingQualitySessions,
     pct: Math.min(100, Math.round((goalTimeSecs / projTimeSecs) * 100)),
+  };
+}
+
+// ── Training periodization ─────────────────────────────────────────────────────
+
+export function getTrainingPhase(weeksToRace, weekNumber, totalWeeks) {
+  if (weeksToRace === null || weeksToRace === undefined) return null;
+  if (weeksToRace <= 0) return {
+    key:"race", name:"Race Week", color:"#FFF8ED", textColor:"#B07000",
+    description:"Race day is here. Stay calm, trust your training, execute the plan.",
+  };
+  if (weeksToRace <= 2) return {
+    key:"taper", name:"Taper", color:"#E8F5F0", textColor:"#0A6E5C",
+    description:"Reduce volume 30–40%, maintain sharpness with race-pace strides. Arrive fresh and confident.",
+  };
+  if (weeksToRace === 3) return {
+    key:"peak", name:"Peak", color:"#FFF4E8", textColor:"#C2610A",
+    description:"Highest volume and intensity week. Final big training block — absorb it well before taper.",
+  };
+  if (weekNumber && weekNumber % 4 === 0) return {
+    key:"recovery", name:"Recovery", color:"#F5F5F3", textColor:"#666",
+    description:"Planned down week — reduce volume ~20%, easy effort only. Let the body absorb recent load.",
+  };
+  if (totalWeeks && weekNumber && weekNumber <= Math.ceil(totalWeeks / 3)) return {
+    key:"base", name:"Base", color:"#EAF4F0", textColor:"#0F6E56",
+    description:"Build aerobic foundation with easy volume and hill work. No hard quality sessions yet.",
+  };
+  return {
+    key:"build", name:"Build", color:"#EEF3FF", textColor:"#1B6FE8",
+    description:"Develop race-specific fitness with threshold, marathon-pace work, and progressive long runs.",
   };
 }
