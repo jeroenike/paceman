@@ -3,6 +3,7 @@ import { supabase, supabaseConfigured } from "./supabase.js";
 import { loadUserData, saveUserData } from "./db.js";
 import {
   DAY_LABELS, SESSION_TYPES, SESSION_COLORS, SESSION_LABELS, RACE_DISTANCES,
+  MARATHON_DEFAULT_SCHEDULE, getTrainingPhase,
   parsePace, secsTopace, computeRacePace, computeGoalTime, computeTrainingPaces,
   getWeekStart, getCurrentWeekStart, getPlannedDay, getAutoLink,
   getWeeksToRace, findLinkedSession, findLinkedSessions, sessionsForWeek, sessionInWeek,
@@ -521,6 +522,14 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
   const p = store.profile;
   const effectiveLongRunPace = profileTrainingPaces(p).longRun;
 
+  // Training phase for the active week
+  const weeksToRaceActive = p.goalDate
+    ? Math.ceil((new Date(p.goalDate) - new Date(activeWeekStart + "T00:00:00")) / (7*24*60*60*1000))
+    : null;
+  const allPlanWeeks = p.goalDate ? getWeeksToRace(getCurrentWeekStart(), p.goalDate) : [];
+  const activeWeekNumber = allPlanWeeks.indexOf(activeWeekStart) + 1;
+  const trainingPhase = getTrainingPhase(weeksToRaceActive, activeWeekNumber || null, allPlanWeeks.length || null);
+
   // Week date range label
   const weekStartDate = new Date(activeWeekStart+"T00:00:00");
   const weekEndDate = new Date(weekStartDate); weekEndDate.setDate(weekStartDate.getDate()+6);
@@ -697,6 +706,16 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
 
       <ErrorBox message={error}/>
       {loading&&<Dots/>}
+
+      {/* Training phase banner */}
+      {trainingPhase && hasProfile && (
+        <div style={{ padding:"10px 12px",borderRadius:8,background:trainingPhase.color,borderLeft:`3px solid ${trainingPhase.textColor}`,marginBottom:10 }}>
+          <div style={{ fontSize:12,fontWeight:700,color:trainingPhase.textColor,marginBottom:2 }}>
+            {trainingPhase.name}{activeWeekNumber && allPlanWeeks.length ? ` — Week ${activeWeekNumber} of ${allPlanWeeks.length}` : ""}
+          </div>
+          <div style={{ fontSize:12,color:trainingPhase.textColor,opacity:0.85 }}>{trainingPhase.description}</div>
+        </div>
+      )}
 
       {/* Unified day list */}
       <WeekDayList
@@ -1770,14 +1789,20 @@ function ProfileScreen({ store, persist, onSaved, isDevMode, onSignOut }) {
             {RACE_GOALS.map(g=>(
               <button key={g} onClick={()=>{
                 set("goal",g);
-                // Clear garminPredicted when switching to a goal it doesn't apply to
                 if (!["5km","10km","Half Marathon","Marathon"].includes(g)) set("garminPredicted","");
+                if (g === "Marathon") set("schedule", MARATHON_DEFAULT_SCHEDULE);
               }}
                 style={{ padding:"10px 6px",borderRadius:8,border:`1.5px solid ${draft.goal===g?"#1B6FE8":"#eee"}`,background:draft.goal===g?"#f0f6ff":"#fff",color:draft.goal===g?"#1B6FE8":"#1a1a1a",fontSize:13,fontWeight:draft.goal===g?700:400,cursor:"pointer" }}>
                 {g}
               </button>
             ))}
           </div>
+          {draft.goal==="Marathon"&&(
+            <div style={{ marginTop:8,padding:"10px 12px",borderRadius:8,background:"#EAF4F0",borderLeft:"3px solid #0F6E56" }}>
+              <div style={{ fontSize:12,fontWeight:700,color:"#0F6E56",marginBottom:2 }}>Marathon training schedule applied</div>
+              <div style={{ fontSize:12,color:"#0F6E56",opacity:0.85 }}>Tue: Threshold · Wed: Medium Long · Thu: Easy · Sat: Easy · Sun: Long Run. Includes Marathon Pace and Medium Long run types.</div>
+            </div>
+          )}
           {draft.goal==="Custom..."&&(
             <div style={{ display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"end" }}>
               <Field label="Custom goal" value={draft.goalCustom} onChange={v=>set("goalCustom",v)} placeholder="e.g. 6 Foot Track"/>
@@ -2202,13 +2227,8 @@ SCORE_JSON`);
 
     // Periodization context
     const weeksToRace = p.goalDate ? Math.ceil((new Date(p.goalDate)-new Date(weekStart+"T00:00:00"))/(1000*60*60*24*7)) : null;
-    const isTaper = weeksToRace !== null && weeksToRace <= 2;
-    const isPeak = weeksToRace !== null && weeksToRace === 3;
-    const isRecovery = weekNumber && weekNumber % 4 === 0 && !isTaper;
-    const weekPhase = isTaper ? "TAPER — reduce volume 30–40%, keep some intensity, prioritise freshness"
-      : isPeak ? "PEAK — highest volume/intensity week of the block"
-      : isRecovery ? "RECOVERY — reduce volume ~20%, easy effort, no hard sessions"
-      : "BUILD — progressive overload, slight increase from previous week";
+    const phase = getTrainingPhase(weeksToRace, weekNumber, totalWeeks);
+    const weekPhase = phase ? `${phase.name.toUpperCase()} — ${phase.description}` : "BUILD — progressive overload, slight increase from previous week";
 
     const periodCtx = [
       weekNumber && totalWeeks ? `Week ${weekNumber} of ${totalWeeks} in training block` : null,
@@ -2284,7 +2304,9 @@ WEEKGOALS_JSON
 }
 WEEKGOALS_JSON
 
-session_type must be one of: rest, run_threshold, run_easy, run_long, crossfit, run_interval.
+session_type must be one of: rest, run_threshold, run_easy, run_long, run_medium_long, run_marathon_pace, crossfit, run_interval.
+- run_medium_long: mid-week run 15–20km at easy to marathon pace, builds endurance without full long-run recovery cost
+- run_marathon_pace: sustained running at goal race pace, 10–18km total, race-specificity for marathon training
 Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.`;
 
     const r = await callClaude("You are an elite running coach AI. Output valid JSON only — no markdown, no prose.", prompt);
