@@ -3,7 +3,7 @@ import { supabase, supabaseConfigured } from "./supabase.js";
 import { loadUserData, saveUserData } from "./db.js";
 import {
   DAY_LABELS, SESSION_TYPES, SESSION_COLORS, SESSION_LABELS, RACE_DISTANCES,
-  MARATHON_DEFAULT_SCHEDULE, getTrainingPhase, getDistanceGuidance, buildCoachingRules,
+  MARATHON_DEFAULT_SCHEDULE, getTrainingPhase, getDistanceGuidance, buildCoachingRules, getAllCoachingRules,
   parsePace, secsTopace, computeRacePace, computeGoalTime, computeTrainingPaces,
   getWeekStart, getCurrentWeekStart, getPlannedDay, getAutoLink,
   getWeeksToRace, findLinkedSession, findLinkedSessions, sessionsForWeek, sessionInWeek,
@@ -720,11 +720,89 @@ ${weeksHTML}
 </html>`;
 }
 
+// ── Coaching Rules Modal ──
+
+const PHASE_NAMES = { base:"Base", build:"Build", peak:"Peak", taper:"Taper" };
+
+function CoachingRulesModal({ profile, currentPhase, onClose }) {
+  const raceDist = RACE_DISTANCES[profile.goal] || (profile.goal === "Custom..." ? parseFloat(profile.goalCustomDist) : null);
+  const allRules = getAllCoachingRules(raceDist, profile.experience, profile.easyHR);
+  const currentKey = currentPhase?.key;
+
+  const activeRules = allRules.filter(r => !currentKey || r.phases.includes(currentKey));
+  const unavailableRules = allRules.filter(r => currentKey && !r.phases.includes(currentKey));
+
+  return (
+    <div onClick={onClose} style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",flexDirection:"column",justifyContent:"flex-end" }}>
+      <div onClick={e=>e.stopPropagation()} style={{ background:"#fff",borderRadius:"16px 16px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",boxShadow:"0 -4px 24px rgba(0,0,0,0.15)" }}>
+        {/* Header */}
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"16px 16px 12px",borderBottom:"1px solid #f0f0ec",flexShrink:0 }}>
+          <div>
+            <div style={{ fontSize:15,fontWeight:800,color:"#1a1a1a" }}>Coaching Rules</div>
+            <div style={{ fontSize:12,color:"#aaa",marginTop:2 }}>
+              {currentKey ? `Applied to your schedule · ${PHASE_NAMES[currentKey] || currentKey} phase` : "Applied to your schedule"}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ fontSize:20,lineHeight:1,background:"none",border:"none",color:"#aaa",cursor:"pointer",padding:"4px 8px" }}>✕</button>
+        </div>
+
+        <div style={{ overflowY:"auto",padding:"12px 16px 24px",flex:1 }}>
+          {!raceDist && (
+            <div style={{ fontSize:13,color:"#aaa",padding:"16px 0",textAlign:"center" }}>
+              Set a race goal in your profile to see coaching rules.
+            </div>
+          )}
+
+          {raceDist && activeRules.length > 0 && (
+            <>
+              {currentKey && (
+                <div style={{ fontSize:11,fontWeight:700,color:"#0F6E56",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8 }}>
+                  Active now — {PHASE_NAMES[currentKey] || currentKey} phase
+                </div>
+              )}
+              {activeRules.map(({ rule, phases }, i) => (
+                <div key={i} style={{ display:"flex",gap:10,padding:"9px 0",borderBottom:"1px solid #f5f5f3" }}>
+                  <span style={{ color:"#0F6E56",fontSize:14,flexShrink:0,marginTop:1 }}>✓</span>
+                  <span style={{ fontSize:13,color:"#1a1a1a",lineHeight:1.5 }}>{rule}</span>
+                </div>
+              ))}
+            </>
+          )}
+
+          {raceDist && unavailableRules.length > 0 && (
+            <>
+              <div style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",marginTop:20,marginBottom:8 }}>
+                Not active in current phase
+              </div>
+              {unavailableRules.map(({ rule, phases }, i) => (
+                <div key={i} style={{ display:"flex",gap:10,padding:"9px 0",borderBottom:"1px solid #f5f5f3",opacity:0.55 }}>
+                  <span style={{ fontSize:14,flexShrink:0,marginTop:1,color:"#aaa" }}>○</span>
+                  <div style={{ flex:1 }}>
+                    <span style={{ fontSize:13,color:"#555",lineHeight:1.5 }}>{rule}</span>
+                    <div style={{ marginTop:4,display:"flex",gap:4,flexWrap:"wrap" }}>
+                      {phases.map(p => (
+                        <span key={p} style={{ fontSize:10,fontWeight:700,color:"#888",background:"#f0f0ec",borderRadius:4,padding:"1px 6px",textTransform:"capitalize" }}>
+                          {PHASE_NAMES[p] || p}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Home Screen ──
 
 function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGeneratePlan, onGenerateAllPlans, onGoProfile, onSaveScheduleOverride, onSaveSession, onSetDayIntensity, onSetDayInjury }) {
   const [activeWeekStart, setActiveWeekStart] = useState(getCurrentWeekStart);
   const [scheduleEdit, setScheduleEdit] = useState(false);
+  const [showRulesModal, setShowRulesModal] = useState(false);
   const goalLabel = store.profile.goal==="Custom..."?store.profile.goalCustom:store.profile.goal;
   const daysToRace = store.profile.goalDate ? Math.ceil((new Date(store.profile.goalDate)-new Date())/(1000*60*60*24)) : null;
 
@@ -958,10 +1036,26 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
       {/* Training phase banner */}
       {trainingPhase && hasProfile && (
         <div style={{ padding:"10px 12px",borderRadius:8,background:trainingPhase.color,borderLeft:`3px solid ${trainingPhase.textColor}`,marginBottom:10 }}>
-          <div style={{ fontSize:12,fontWeight:700,color:trainingPhase.textColor,marginBottom:2 }}>
-            {trainingPhase.name}{activeWeekNumber && allPlanWeeks.length ? ` — Week ${activeWeekNumber} of ${allPlanWeeks.length}` : ""}
+          <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8 }}>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:12,fontWeight:700,color:trainingPhase.textColor,marginBottom:2 }}>
+                {trainingPhase.name}{activeWeekNumber && allPlanWeeks.length ? ` — Week ${activeWeekNumber} of ${allPlanWeeks.length}` : ""}
+              </div>
+              <div style={{ fontSize:12,color:trainingPhase.textColor,opacity:0.85 }}>{trainingPhase.description}</div>
+            </div>
+            <button onClick={()=>setShowRulesModal(true)}
+              style={{ flexShrink:0,fontSize:10,fontWeight:700,color:trainingPhase.textColor,background:"rgba(0,0,0,0.06)",border:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",opacity:0.8,marginTop:1 }}>
+              Rules
+            </button>
           </div>
-          <div style={{ fontSize:12,color:trainingPhase.textColor,opacity:0.85 }}>{trainingPhase.description}</div>
+        </div>
+      )}
+      {!trainingPhase && hasProfile && (
+        <div style={{ display:"flex",justifyContent:"flex-end",marginBottom:8 }}>
+          <button onClick={()=>setShowRulesModal(true)}
+            style={{ fontSize:11,color:"#aaa",background:"none",border:"1px solid #e0e0dc",borderRadius:6,padding:"3px 9px",cursor:"pointer",fontWeight:600 }}>
+            Coaching rules
+          </button>
         </div>
       )}
 
@@ -984,6 +1078,14 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
         dayInjuries={store.dayInjuries||{}}
         onSetDayInjury={onSetDayInjury}
       />
+
+      {showRulesModal && (
+        <CoachingRulesModal
+          profile={store.profile}
+          currentPhase={trainingPhase}
+          onClose={()=>setShowRulesModal(false)}
+        />
+      )}
     </div>
   );
 }
