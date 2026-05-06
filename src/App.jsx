@@ -2594,8 +2594,30 @@ SCORE_JSON`);
     })() : null;
 
     const raceDist = profileRaceDist(p);
+    const isMarathon = raceDist != null && raceDist >= 42;
     const distanceGuidance = getDistanceGuidance(raceDist, p.experience);
     const coachingRules = buildCoachingRules(raceDist, p.experience, p.easyHR, phase);
+
+    // Explicit long run floor for marathon — stated separately from rules so the AI cannot miss it
+    const longRunConstraint = (() => {
+      if (!isMarathon) return null;
+      const exp = p.experience;
+      const phaseKey = phase?.key;
+      if (phaseKey === "peak") {
+        const min = exp === "club_athlete" ? 34 : exp === "competitive_recreational" ? 32 : 30;
+        const max = exp === "club_athlete" ? 38 : exp === "competitive_recreational" ? 35 : 32;
+        return `MANDATORY PEAK LONG RUN: Sunday long run MUST be ${min}–${max}km. Setting longRunDistance below ${min} is incorrect for this phase. Do not generate a 24km long run in peak week.`;
+      }
+      if (phaseKey === "build") {
+        if (weekNumber && totalWeeks) {
+          const progress = weekNumber / totalWeeks;
+          if (progress >= 0.7) return `LATE BUILD LONG RUN: Sunday run should be 27–30km with a 10–12km marathon pace finish.`;
+          if (progress >= 0.5) return `MID BUILD LONG RUN: Sunday run should be 24–28km with a 8–10km marathon pace finish.`;
+          return `EARLY BUILD LONG RUN: Sunday run should be 20–24km with a 6–8km marathon pace finish.`;
+        }
+      }
+      return null;
+    })();
 
     const prompt = `Generate a detailed weekly training plan for week starting ${weekStart}.
 
@@ -2610,7 +2632,7 @@ Athlete profile:
 
 Recent sessions:
 ${recentSessions||"No sessions logged yet"}
-
+${longRunConstraint ? `\n${longRunConstraint}\n` : ""}
 Coaching rules:
 ${distanceGuidance ? `- ${distanceGuidance}\n` : ""}- ${coachingRules.join("\n- ")}
 
