@@ -9,7 +9,9 @@ import {
   isDayAfterRace, isDayRaceDay, isWeekInPast,
   DAY_LABELS, SESSION_LABELS, SESSION_COLORS,
   secsToTime, parseDistanceFromMainSet, computePlanDeltas, computeRaceProjection,
-  deriveThresholdPace, deriveLongRunPace, normalizeInjuries, injuriesToText,
+  deriveThresholdPace, deriveLongRunPace, deriveEasyPace,
+  computeLongRunTarget, applyPhaseSchedule,
+  normalizeInjuries, injuriesToText,
   getTrainingPhase, getDistanceGuidance, buildCoachingRules, getAllCoachingRules,
   getDaySessionType, getRotationLabel, validateSchedule,
 } from "./utils.js";
@@ -1820,5 +1822,195 @@ describe("validateSchedule", () => {
   it("does not include mp_stacking check for half marathon", () => {
     const r = validateSchedule(goodSchedule, goodRotations, 21.0975);
     expect(r.find(x => x.id === "mp_stacking")).toBeUndefined();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// deriveEasyPace — race pace + 60–90 sec/km
+// ─────────────────────────────────────────────────────────────────────────────
+describe("deriveEasyPace", () => {
+  it("returns null for null/empty input", () => {
+    expect(deriveEasyPace(null)).toBeNull();
+    expect(deriveEasyPace("")).toBeNull();
+  });
+  it("derives 6:27–6:57 from 5:27 race pace", () => {
+    expect(deriveEasyPace("5:27")).toEqual({ min: "6:27", max: "6:57" });
+  });
+  it("min is exactly 60 sec/km slower than race pace", () => {
+    const racePace = parsePace("5:00");
+    const minSecs = parsePace(deriveEasyPace("5:00").min);
+    expect(minSecs - racePace).toBe(60);
+  });
+  it("max is exactly 90 sec/km slower than race pace", () => {
+    const racePace = parsePace("5:00");
+    const maxSecs = parsePace(deriveEasyPace("5:00").max);
+    expect(maxSecs - racePace).toBe(90);
+  });
+  it("returns the same band for the same input — no week-to-week drift", () => {
+    expect(deriveEasyPace("5:27")).toEqual(deriveEasyPace("5:27"));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// computeLongRunTarget — deterministic per-week long run targets
+// ─────────────────────────────────────────────────────────────────────────────
+describe("computeLongRunTarget", () => {
+  const exp = "competitive_recreational"; // peak 33, floor 20
+
+  it("returns null for non-marathon distance", () => {
+    expect(computeLongRunTarget(21.0975, exp, 5, 17, "build", 12)).toBeNull();
+    expect(computeLongRunTarget(null, exp, 5, 17, "build", 12)).toBeNull();
+  });
+
+  it("race week → isRace true and no longRunKm", () => {
+    const r = computeLongRunTarget(42.195, exp, 17, 17, "race", 0);
+    expect(r.isRace).toBe(true);
+    expect(r.longRunKm).toBeNull();
+    expect(r.mpFinishKm).toBeNull();
+  });
+
+  it("peak week → experience peak with 12km MP finish", () => {
+    const r = computeLongRunTarget(42.195, exp, 13, 17, "peak", 4);
+    expect(r.longRunKm).toBe(33);
+    expect(r.mpFinishKm).toBe(12);
+  });
+
+  it("taper steps down: 75% / 55% / 40% of peak", () => {
+    expect(computeLongRunTarget(42.195, exp, 14, 17, "taper", 3).longRunKm).toBe(Math.round(33 * 0.75));
+    expect(computeLongRunTarget(42.195, exp, 15, 17, "taper", 2).longRunKm).toBe(Math.round(33 * 0.55));
+    expect(computeLongRunTarget(42.195, exp, 16, 17, "taper", 1).longRunKm).toBe(Math.round(33 * 0.40));
+  });
+
+  it("recovery week is shorter than the equivalent build week", () => {
+    const buildKm = computeLongRunTarget(42.195, exp, 9, 17, "build", 8).longRunKm;
+    const recoveryKm = computeLongRunTarget(42.195, exp, 8, 17, "recovery", 9).longRunKm;
+    expect(recoveryKm).toBeLessThan(buildKm);
+  });
+
+  it("recovery week has no MP segment", () => {
+    expect(computeLongRunTarget(42.195, exp, 8, 17, "recovery", 9).mpFinishKm).toBe(0);
+  });
+
+  it("W9–W11 in a 17-week marathon all have DIFFERENT long-run distances", () => {
+    const w9  = computeLongRunTarget(42.195, exp, 9,  17, "build", 8).longRunKm;
+    const w10 = computeLongRunTarget(42.195, exp, 10, 17, "build", 7).longRunKm;
+    const w11 = computeLongRunTarget(42.195, exp, 11, 17, "build", 6).longRunKm;
+    expect(w9).not.toBe(w10);
+    expect(w10).not.toBe(w11);
+    expect(w9).toBeLessThan(w11); // monotonic over build
+  });
+
+  it("MP segment progresses across build weeks", () => {
+    const w7  = computeLongRunTarget(42.195, exp, 7,  17, "build", 10).mpFinishKm;
+    const w11 = computeLongRunTarget(42.195, exp, 11, 17, "build", 6).mpFinishKm;
+    expect(w11).toBeGreaterThanOrEqual(w7);
+  });
+
+  it("club_athlete peaks higher than recreational", () => {
+    const club = computeLongRunTarget(42.195, "club_athlete",   13, 17, "peak", 4).longRunKm;
+    const rec  = computeLongRunTarget(42.195, "recreational",   13, 17, "peak", 4).longRunKm;
+    expect(club).toBeGreaterThan(rec);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// applyPhaseSchedule — prompt-time downgrades for recovery / taper / race
+// ─────────────────────────────────────────────────────────────────────────────
+describe("applyPhaseSchedule", () => {
+  const sched = {
+    Mon: "rest", Tue: "run_threshold", Wed: "run_medium_long",
+    Thu: "run_marathon_pace", Fri: "rest", Sat: "run_easy", Sun: "run_long",
+  };
+
+  it("returns the schedule unchanged for build phase", () => {
+    expect(applyPhaseSchedule(sched, "build")).toEqual(sched);
+  });
+
+  it("returns the schedule unchanged for base phase", () => {
+    expect(applyPhaseSchedule(sched, "base")).toEqual(sched);
+  });
+
+  it("recovery: downgrades threshold and MP to easy", () => {
+    const out = applyPhaseSchedule(sched, "recovery");
+    expect(out.Tue).toBe("run_easy");
+    expect(out.Thu).toBe("run_easy");
+  });
+
+  it("recovery: also downgrades hills to easy", () => {
+    const out = applyPhaseSchedule({ ...sched, Wed: "run_hills" }, "recovery");
+    expect(out.Wed).toBe("run_easy");
+  });
+
+  it("recovery: preserves rest days and the long run day", () => {
+    const out = applyPhaseSchedule(sched, "recovery");
+    expect(out.Mon).toBe("rest");
+    expect(out.Fri).toBe("rest");
+    expect(out.Sat).toBe("run_easy");
+    expect(out.Sun).toBe("run_long");
+  });
+
+  it("taper: downgrades hills and intervals; keeps threshold and MP", () => {
+    const t = { ...sched, Wed: "run_hills", Tue: "run_interval" };
+    const out = applyPhaseSchedule(t, "taper");
+    expect(out.Tue).toBe("run_easy");
+    expect(out.Wed).toBe("run_easy");
+    expect(out.Thu).toBe("run_marathon_pace"); // taper still allows MP
+  });
+
+  it("race week: downgrades hills and intervals", () => {
+    const r = { ...sched, Wed: "run_hills", Tue: "run_interval" };
+    const out = applyPhaseSchedule(r, "race");
+    expect(out.Tue).toBe("run_easy");
+    expect(out.Wed).toBe("run_easy");
+  });
+
+  it("does not mutate the input schedule", () => {
+    const input = { ...sched };
+    applyPhaseSchedule(input, "recovery");
+    expect(input.Tue).toBe("run_threshold");
+  });
+
+  it("returns empty object for null schedule", () => {
+    expect(applyPhaseSchedule(null, "build")).toEqual({});
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// buildCoachingRules — phase additions (recovery, race, taper hills, MP pin)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("buildCoachingRules — phase additions", () => {
+  it("recovery phase bans threshold/MP/intervals/hills", () => {
+    const r = buildCoachingRules(42.195, "recreational", "130-145", { key: "recovery" });
+    const text = r.join(" | ");
+    expect(text).toMatch(/RECOVERY/);
+    expect(text).toMatch(/run_threshold/);
+    expect(text).toMatch(/run_marathon_pace/);
+    expect(text).toMatch(/run_interval/);
+    expect(text).toMatch(/run_hills/);
+  });
+
+  it("race phase declares Sunday is the marathon", () => {
+    const r = buildCoachingRules(42.195, "recreational", "130-145", { key: "race" });
+    const text = r.join(" | ");
+    expect(text.toLowerCase()).toMatch(/race week/);
+    expect(text.toLowerCase()).toMatch(/marathon/);
+  });
+
+  it("taper phase bans hill repeats in final 14 days", () => {
+    const r = buildCoachingRules(42.195, "recreational", "130-145", { key: "taper" });
+    expect(r.some(s => /FINAL 14 DAYS|hill repeats/i.test(s))).toBe(true);
+  });
+
+  it("MP-pace pin rule appears in build/peak/taper/recovery phases", () => {
+    const phases = ["build", "peak", "taper", "recovery"];
+    for (const key of phases) {
+      const r = buildCoachingRules(42.195, "recreational", "130-145", { key });
+      expect(r.some(s => /goal race pace|exactly the athlete's goal race pace/i.test(s))).toBe(true);
+    }
+  });
+
+  it("MP-pace pin is NOT applied for non-marathon distances", () => {
+    const r = buildCoachingRules(21.0975, "recreational", "130-145", { key: "build" });
+    expect(r.some(s => /exactly the athlete's goal race pace/i.test(s))).toBe(false);
   });
 });
