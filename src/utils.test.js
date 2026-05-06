@@ -10,7 +10,7 @@ import {
   DAY_LABELS, SESSION_LABELS, SESSION_COLORS,
   secsToTime, parseDistanceFromMainSet, computePlanDeltas, computeRaceProjection,
   deriveThresholdPace, deriveLongRunPace, normalizeInjuries, injuriesToText,
-  getTrainingPhase, getDistanceGuidance, buildCoachingRules,
+  getTrainingPhase, getDistanceGuidance, buildCoachingRules, getAllCoachingRules,
 } from "./utils.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1208,5 +1208,93 @@ describe("buildCoachingRules", () => {
   it("always includes mainSet specificity rule", () => {
     const r = rules(42.195);
     expect(r.some(s => s.includes("mainSet"))).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getAllCoachingRules — cross-phase rule collection with phase annotations
+// ─────────────────────────────────────────────────────────────────────────────
+describe("getAllCoachingRules", () => {
+  it("returns an array of objects with rule and phases properties", () => {
+    const all = getAllCoachingRules(42.195, "recreational", "130-145");
+    expect(Array.isArray(all)).toBe(true);
+    all.forEach(entry => {
+      expect(typeof entry.rule).toBe("string");
+      expect(Array.isArray(entry.phases)).toBe(true);
+    });
+  });
+
+  it("contains more rules than any single phase alone", () => {
+    const buildRules = buildCoachingRules(42.195, "recreational", "130-145", { key: "build" });
+    const all = getAllCoachingRules(42.195, "recreational", "130-145");
+    expect(all.length).toBeGreaterThan(buildRules.length);
+  });
+
+  it("every rule from Build phase is present in getAllCoachingRules", () => {
+    const buildRules = buildCoachingRules(42.195, "recreational", "130-145", { key: "build" });
+    const all = getAllCoachingRules(42.195, "recreational", "130-145");
+    const allRuleTexts = new Set(all.map(r => r.rule));
+    buildRules.forEach(r => expect(allRuleTexts.has(r)).toBe(true));
+  });
+
+  it("every rule from Base phase is present in getAllCoachingRules", () => {
+    const baseRules = buildCoachingRules(42.195, "recreational", "130-145", { key: "base" });
+    const all = getAllCoachingRules(42.195, "recreational", "130-145");
+    const allRuleTexts = new Set(all.map(r => r.rule));
+    baseRules.forEach(r => expect(allRuleTexts.has(r)).toBe(true));
+  });
+
+  it("peak-only rule (30-32km) is annotated with peak phase only", () => {
+    const all = getAllCoachingRules(42.195, "recreational", "130-145");
+    const peakRule = all.find(r => r.rule.includes("30–32km"));
+    expect(peakRule).toBeDefined();
+    expect(peakRule.phases).toContain("peak");
+    expect(peakRule.phases).not.toContain("build");
+    expect(peakRule.phases).not.toContain("base");
+  });
+
+  it("Tuesday rotation rule is annotated with build and peak phases", () => {
+    const all = getAllCoachingRules(42.195, "recreational", "130-145");
+    const rotRule = all.find(r => r.rule.includes("ROTATE") && r.rule.toLowerCase().includes("tuesday"));
+    expect(rotRule).toBeDefined();
+    expect(rotRule.phases).toContain("build");
+    expect(rotRule.phases).toContain("peak");
+    expect(rotRule.phases).not.toContain("base");
+  });
+
+  it("80/20 rule appears in all four phases", () => {
+    const all = getAllCoachingRules(42.195, "recreational", "130-145");
+    const rule = all.find(r => r.rule.includes("80/20") || r.rule.includes("80%"));
+    expect(rule).toBeDefined();
+    expect(rule.phases).toContain("base");
+    expect(rule.phases).toContain("build");
+    expect(rule.phases).toContain("peak");
+    expect(rule.phases).toContain("taper");
+  });
+
+  it("CrossFit placement rule (Monday only) appears in all phases for marathon", () => {
+    const all = getAllCoachingRules(42.195, "recreational", "130-145");
+    const cfRule = all.find(r => r.rule.toLowerCase().includes("crossfit") && r.rule.toLowerCase().includes("monday"));
+    expect(cfRule).toBeDefined();
+    ["base", "build", "peak", "taper"].forEach(p => expect(cfRule.phases).toContain(p));
+  });
+
+  it("rules are deduplicated — no identical rule text appears twice", () => {
+    const all = getAllCoachingRules(42.195, "recreational", "130-145");
+    const texts = all.map(r => r.rule);
+    const unique = new Set(texts);
+    expect(texts.length).toBe(unique.size);
+  });
+
+  it("returns rules for non-marathon (half marathon)", () => {
+    const all = getAllCoachingRules(21.0975, "recreational", "130-145");
+    expect(all.length).toBeGreaterThan(0);
+    expect(all.some(r => r.rule.includes("30–40%"))).toBe(true);
+    expect(all.some(r => r.rule.includes("30–32km"))).toBe(false);
+  });
+
+  it("returns empty-ish list when raceDist is null", () => {
+    const all = getAllCoachingRules(null, "recreational", "130-145");
+    expect(Array.isArray(all)).toBe(true);
   });
 });

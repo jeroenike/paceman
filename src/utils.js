@@ -487,6 +487,23 @@ export function getDistanceGuidance(raceDist, experience) {
   return `5K volume targets: weekly total 25–45km, long run building to 12–16km peak, threshold sessions 6–10km total.`;
 }
 
+/**
+ * Returns all coaching rules across every training phase, annotated with
+ * the phase keys in which each rule is active.
+ * Used to show the user which rules are applied now vs. coming in future phases.
+ */
+export function getAllCoachingRules(raceDist, experience, easyHR) {
+  const phaseKeys = ["base", "build", "peak", "taper"];
+  const rulePhases = new Map();
+  phaseKeys.forEach(key => {
+    buildCoachingRules(raceDist, experience, easyHR, { key }).forEach(rule => {
+      if (!rulePhases.has(rule)) rulePhases.set(rule, []);
+      rulePhases.get(rule).push(key);
+    });
+  });
+  return Array.from(rulePhases.entries()).map(([rule, phases]) => ({ rule, phases }));
+}
+
 export function buildCoachingRules(raceDist, experience, easyHR, phase) {
   const isMarathon = raceDist != null && raceDist >= 42;
   const phaseKey = phase?.key;
