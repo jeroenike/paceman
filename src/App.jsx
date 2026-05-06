@@ -3,7 +3,7 @@ import { supabase, supabaseConfigured } from "./supabase.js";
 import { loadUserData, saveUserData } from "./db.js";
 import {
   DAY_LABELS, SESSION_TYPES, SESSION_COLORS, SESSION_LABELS, RACE_DISTANCES,
-  MARATHON_DEFAULT_SCHEDULE, getTrainingPhase,
+  MARATHON_DEFAULT_SCHEDULE, getTrainingPhase, getDistanceGuidance, buildCoachingRules,
   parsePace, secsTopace, computeRacePace, computeGoalTime, computeTrainingPaces,
   getWeekStart, getCurrentWeekStart, getPlannedDay, getAutoLink,
   getWeeksToRace, findLinkedSession, findLinkedSessions, sessionsForWeek, sessionInWeek,
@@ -2243,25 +2243,8 @@ SCORE_JSON`);
     })() : null;
 
     const raceDist = profileRaceDist(p);
-    const distanceGuidance = (() => {
-      if (!raceDist) return null;
-      const exp = p.experience;
-      if (raceDist >= 42) {
-        const weeklyRange = exp === "club_athlete" ? "65–90" : exp === "competitive_recreational" ? "55–75" : "45–65";
-        const longRunStart = exp === "club_athlete" ? "20–24" : exp === "competitive_recreational" ? "18–22" : "16–20";
-        const longRunPeak = exp === "club_athlete" ? "32–38" : exp === "competitive_recreational" ? "30–35" : "26–32";
-        return `MARATHON volume targets: weekly total ${weeklyRange}km. Long run is the primary driver — start at ${longRunStart}km in early weeks, add ~2km per non-recovery week, peak at ${longRunPeak}km (3 weeks out). Long run can be 40–50% of weekly volume. Threshold sessions 12–18km total. Do NOT generate half-marathon-level volumes.`;
-      }
-      if (raceDist >= 21) {
-        const weeklyRange = exp === "club_athlete" ? "55–70" : exp === "competitive_recreational" ? "45–60" : "35–50";
-        const longRunRange = exp === "club_athlete" ? "20–26" : exp === "competitive_recreational" ? "18–24" : "16–20";
-        return `HALF MARATHON volume targets: weekly total ${weeklyRange}km, long run building to ${longRunRange}km peak, threshold sessions 10–14km total.`;
-      }
-      if (raceDist >= 10) {
-        return `10K volume targets: weekly total 30–55km, long run building to 14–20km peak, threshold sessions 8–12km total.`;
-      }
-      return `5K volume targets: weekly total 25–45km, long run building to 12–16km peak, threshold sessions 6–10km total.`;
-    })();
+    const distanceGuidance = getDistanceGuidance(raceDist, p.experience);
+    const coachingRules = buildCoachingRules(raceDist, p.experience, p.easyHR, phase);
 
     const prompt = `Generate a detailed weekly training plan for week starting ${weekStart}.
 
@@ -2278,12 +2261,7 @@ Recent sessions:
 ${recentSessions||"No sessions logged yet"}
 
 Coaching rules:
-${distanceGuidance ? `- ${distanceGuidance}\n` : ""}- Build volume ~10% per week (unless recovery/taper week)
-${raceDist && raceDist >= 42 ? "- Long run progresses independently per the marathon targets above — do NOT cap it at 30–40% of weekly volume" : "- Long run = 30–40% of weekly volume"}
-- Hard sessions (threshold/intervals) max 2x/week, never back-to-back
-- Easy runs at HR ${p.easyHR||"below 145"} bpm, truly conversational
-- mainSet: specific targets — exact distance, pace, reps, rest, HR zone
-- Taper: drop volume, keep 1 quality session, race pace strides
+${distanceGuidance ? `- ${distanceGuidance}\n` : ""}- ${coachingRules.join("\n- ")}
 
 Respond with ONLY this JSON — no other text:
 WEEKGOALS_JSON

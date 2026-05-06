@@ -446,13 +446,13 @@ export function getTrainingPhase(weeksToRace, weekNumber, totalWeeks) {
     key:"race", name:"Race Week", color:"#FFF8ED", textColor:"#B07000",
     description:"Race day is here. Stay calm, trust your training, execute the plan.",
   };
-  if (weeksToRace <= 2) return {
+  if (weeksToRace <= 3) return {
     key:"taper", name:"Taper", color:"#E8F5F0", textColor:"#0A6E5C",
-    description:"Reduce volume 30–40%, maintain sharpness with race-pace strides. Arrive fresh and confident.",
+    description:"Reduce volume: −30% week 1, −50% week 2, −60% race week. Keep 1 quality session per week at race pace. Strides daily.",
   };
-  if (weeksToRace === 3) return {
+  if (weeksToRace === 4) return {
     key:"peak", name:"Peak", color:"#FFF4E8", textColor:"#C2610A",
-    description:"Highest volume and intensity week. Final big training block — absorb it well before taper.",
+    description:"Highest volume and intensity. Final big training block — absorb it fully before the 3-week taper.",
   };
   if (weekNumber && weekNumber % 4 === 0) return {
     key:"recovery", name:"Recovery", color:"#F5F5F3", textColor:"#666",
@@ -466,4 +466,57 @@ export function getTrainingPhase(weeksToRace, weekNumber, totalWeeks) {
     key:"build", name:"Build", color:"#EEF3FF", textColor:"#1B6FE8",
     description:"Develop race-specific fitness with threshold, marathon-pace work, and progressive long runs.",
   };
+}
+
+export function getDistanceGuidance(raceDist, experience) {
+  if (!raceDist) return null;
+  if (raceDist >= 42) {
+    const weekly = experience === "club_athlete" ? "65–90" : experience === "competitive_recreational" ? "55–75" : "45–65";
+    const longStart = experience === "club_athlete" ? "20–24" : experience === "competitive_recreational" ? "18–22" : "16–20";
+    const longPeak = experience === "club_athlete" ? "32–38" : experience === "competitive_recreational" ? "30–35" : "26–32";
+    return `MARATHON volume targets: weekly total ${weekly}km. Long run is the primary driver — start at ${longStart}km in early weeks, add ~2km per non-recovery week, peak at ${longPeak}km (4 weeks out). Long run can be 40–50% of weekly volume. Threshold sessions 10–14km total. Do NOT generate half-marathon-level volumes.`;
+  }
+  if (raceDist >= 21) {
+    const weekly = experience === "club_athlete" ? "55–70" : experience === "competitive_recreational" ? "45–60" : "35–50";
+    const longPeak = experience === "club_athlete" ? "20–26" : experience === "competitive_recreational" ? "18–24" : "16–20";
+    return `HALF MARATHON volume targets: weekly total ${weekly}km, long run building to ${longPeak}km peak, threshold sessions 10–14km total.`;
+  }
+  if (raceDist >= 10) {
+    return `10K volume targets: weekly total 30–55km, long run building to 14–20km peak, threshold sessions 8–12km total.`;
+  }
+  return `5K volume targets: weekly total 25–45km, long run building to 12–16km peak, threshold sessions 6–10km total.`;
+}
+
+export function buildCoachingRules(raceDist, experience, easyHR, phase) {
+  const isMarathon = raceDist != null && raceDist >= 42;
+  const phaseKey = phase?.key;
+  const rules = [];
+
+  rules.push("Build volume ~10% per week (unless recovery/taper week)");
+
+  if (isMarathon) {
+    rules.push("Long run progresses independently as the primary adaptation driver — percentage cap does not apply for marathon");
+    if (phaseKey === "build" || phaseKey === "peak") {
+      rules.push("Progression long runs: from week 5 onward, run the final 5–12km at marathon race pace to build race specificity");
+    }
+  } else {
+    rules.push("Long run = 30–40% of weekly volume");
+  }
+
+  rules.push("80/20 rule: at least 80% of weekly volume must be easy effort. Hard volume (threshold + intervals + marathon pace combined) must not exceed 20% of total weekly km");
+  rules.push("Hard sessions max 2×/week, never back-to-back");
+  rules.push("run_interval = VO2max work: 5×1000–1200m at 5K effort, 2–3 min recovery. Use in Build/Peak phase only — not during Base");
+  rules.push("run_threshold = lactate threshold: 10–14km total at threshold pace (sustained, or 3×3km with 2 min rest)");
+
+  if (isMarathon) {
+    rules.push("run_marathon_pace = sustained goal race pace: 12–18km total. Use in Build/Peak phase");
+    rules.push("Cross-training (crossfit days): low-impact only — cycling, swimming, elliptical. No high-intensity CrossFit during marathon training");
+  }
+
+  rules.push(`Easy runs at HR ${easyHR || "below 145"} bpm, truly conversational`);
+  rules.push("Strides: 6×80–100m relaxed accelerations at the end of easy runs, 2–3 times/week from week 3 onward. Not a hard effort — smooth build to ~5K pace then float down");
+  rules.push("mainSet: specific targets — exact distance, pace, reps, rest, HR zone");
+  rules.push("Taper: drop volume 30% in taper week 1, 50% in week 2, 60% in race week. Keep 1 quality session per taper week at race pace. Race-pace strides daily");
+
+  return rules;
 }

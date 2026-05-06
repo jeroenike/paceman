@@ -10,6 +10,7 @@ import {
   DAY_LABELS, SESSION_LABELS, SESSION_COLORS,
   secsToTime, parseDistanceFromMainSet, computePlanDeltas, computeRaceProjection,
   deriveThresholdPace, deriveLongRunPace, normalizeInjuries, injuriesToText,
+  getTrainingPhase, getDistanceGuidance, buildCoachingRules,
 } from "./utils.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -799,4 +800,266 @@ describe("injuriesToText", () => {
   it("returns 'none' for empty array", () => expect(injuriesToText([])).toBe("none"));
   it("returns 'none' for null", () => expect(injuriesToText(null)).toBe("none"));
   it("returns 'none' for __none__ sentinel", () => expect(injuriesToText(["__none__"])).toBe("none"));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getTrainingPhase
+// ─────────────────────────────────────────────────────────────────────────────
+describe("getTrainingPhase", () => {
+  it("returns null when weeksToRace is null", () =>
+    expect(getTrainingPhase(null, 1, 17)).toBeNull());
+
+  it("returns null when weeksToRace is undefined", () =>
+    expect(getTrainingPhase(undefined, 1, 17)).toBeNull());
+
+  it("returns race when 0 weeks to race", () =>
+    expect(getTrainingPhase(0, 17, 17).key).toBe("race"));
+
+  // Taper — 3 weeks (standard marathon taper)
+  it("returns taper when 3 weeks to race", () =>
+    expect(getTrainingPhase(3, 14, 17).key).toBe("taper"));
+
+  it("returns taper when 2 weeks to race", () =>
+    expect(getTrainingPhase(2, 15, 17).key).toBe("taper"));
+
+  it("returns taper when 1 week to race", () =>
+    expect(getTrainingPhase(1, 16, 17).key).toBe("taper"));
+
+  it("does NOT return taper when 4 weeks to race", () =>
+    expect(getTrainingPhase(4, 13, 17).key).not.toBe("taper"));
+
+  // Peak — exactly 4 weeks out
+  it("returns peak when 4 weeks to race", () =>
+    expect(getTrainingPhase(4, 13, 17).key).toBe("peak"));
+
+  it("does NOT return peak at 3 weeks (that is taper)", () =>
+    expect(getTrainingPhase(3, 14, 17).key).toBe("taper"));
+
+  it("does NOT return peak at 5 weeks", () =>
+    expect(getTrainingPhase(5, 12, 17).key).not.toBe("peak"));
+
+  // Recovery — every 4th week, not during taper
+  it("returns recovery on week 4", () =>
+    expect(getTrainingPhase(13, 4, 17).key).toBe("recovery"));
+
+  it("returns recovery on week 8", () =>
+    expect(getTrainingPhase(9, 8, 17).key).toBe("recovery"));
+
+  it("does NOT return recovery during taper even if week is divisible by 4", () =>
+    expect(getTrainingPhase(2, 16, 17).key).toBe("taper"));
+
+  // Base — first third of block
+  it("returns base in week 1", () =>
+    expect(getTrainingPhase(16, 1, 17).key).toBe("base"));
+
+  it("returns base up to week ceil(totalWeeks/3)", () =>
+    expect(getTrainingPhase(11, 6, 17).key).toBe("base")); // ceil(17/3)=6
+
+  it("returns build after first third", () =>
+    expect(getTrainingPhase(10, 7, 17).key).toBe("build"));
+
+  // Build — default for middle of block
+  it("returns build in mid-block", () =>
+    expect(getTrainingPhase(8, 9, 17).key).toBe("build"));
+
+  // Phase descriptions present
+  it("taper description mentions volume reduction", () =>
+    expect(getTrainingPhase(2, 15, 17).description).toMatch(/30%|50%|60%/));
+
+  it("peak description mentions highest volume", () =>
+    expect(getTrainingPhase(4, 13, 17).description.toLowerCase()).toContain("highest"));
+
+  it("base description mentions no hard sessions", () =>
+    expect(getTrainingPhase(16, 1, 17).description.toLowerCase()).toContain("no hard"));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getDistanceGuidance
+// ─────────────────────────────────────────────────────────────────────────────
+describe("getDistanceGuidance", () => {
+  it("returns null for no race distance", () =>
+    expect(getDistanceGuidance(null, "recreational")).toBeNull());
+
+  describe("marathon (42.195km)", () => {
+    it("recreational: correct weekly range 45–65km", () =>
+      expect(getDistanceGuidance(42.195, "recreational")).toContain("45–65"));
+
+    it("competitive_recreational: correct weekly range 55–75km", () =>
+      expect(getDistanceGuidance(42.195, "competitive_recreational")).toContain("55–75"));
+
+    it("club_athlete: correct weekly range 65–90km", () =>
+      expect(getDistanceGuidance(42.195, "club_athlete")).toContain("65–90"));
+
+    it("recreational: peak long run 26–32km", () =>
+      expect(getDistanceGuidance(42.195, "recreational")).toContain("26–32"));
+
+    it("club_athlete: peak long run 32–38km", () =>
+      expect(getDistanceGuidance(42.195, "club_athlete")).toContain("32–38"));
+
+    it("threshold capped at 14km (not 18km)", () => {
+      const g = getDistanceGuidance(42.195, "recreational");
+      expect(g).toContain("10–14");
+      expect(g).not.toContain("18km");
+    });
+
+    it("long run can be 40–50% of weekly volume", () =>
+      expect(getDistanceGuidance(42.195, "recreational")).toContain("40–50%"));
+
+    it("explicitly says do not generate half-marathon volumes", () =>
+      expect(getDistanceGuidance(42.195, "recreational").toLowerCase()).toContain("do not"));
+  });
+
+  describe("half marathon (21.0975km)", () => {
+    it("recreational: weekly range 35–50km", () =>
+      expect(getDistanceGuidance(21.0975, "recreational")).toContain("35–50"));
+
+    it("club_athlete: weekly range 55–70km", () =>
+      expect(getDistanceGuidance(21.0975, "club_athlete")).toContain("55–70"));
+
+    it("is labelled HALF MARATHON, not standalone MARATHON", () => {
+      const g = getDistanceGuidance(21.0975, "recreational");
+      expect(g).toContain("HALF MARATHON");
+      expect(g.startsWith("HALF MARATHON")).toBe(true);
+    });
+  });
+
+  describe("10K (10km)", () => {
+    it("includes 10K label", () =>
+      expect(getDistanceGuidance(10, "recreational")).toContain("10K"));
+
+    it("weekly range 30–55km", () =>
+      expect(getDistanceGuidance(10, "recreational")).toContain("30–55"));
+  });
+
+  describe("5K (5km)", () => {
+    it("includes 5K label", () =>
+      expect(getDistanceGuidance(5, "recreational")).toContain("5K"));
+
+    it("weekly range 25–45km", () =>
+      expect(getDistanceGuidance(5, "recreational")).toContain("25–45"));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// buildCoachingRules
+// ─────────────────────────────────────────────────────────────────────────────
+describe("buildCoachingRules", () => {
+  const buildPhase = { key: "build" };
+  const basePhase = { key: "base" };
+  const taperPhase = { key: "taper" };
+
+  function rules(raceDist, exp = "recreational", hr = "130-145", phase = buildPhase) {
+    return buildCoachingRules(raceDist, exp, hr, phase);
+  }
+
+  it("returns an array of strings", () =>
+    expect(Array.isArray(rules(42.195))).toBe(true));
+
+  // 80/20 rule
+  it("includes 80/20 easy/hard rule", () => {
+    const r = rules(42.195);
+    expect(r.some(s => s.includes("80%") || s.includes("80/20"))).toBe(true);
+  });
+
+  it("hard volume cap is 20% of weekly km", () => {
+    const r = rules(42.195);
+    expect(r.some(s => s.includes("20%") && s.toLowerCase().includes("hard"))).toBe(true);
+  });
+
+  // Strides
+  it("includes strides guidance", () => {
+    const r = rules(42.195);
+    expect(r.some(s => s.toLowerCase().includes("strides"))).toBe(true);
+  });
+
+  it("strides are 6×80–100m", () => {
+    const r = rules(42.195);
+    expect(r.some(s => s.includes("80–100m"))).toBe(true);
+  });
+
+  // VO2max vs threshold differentiation
+  it("distinguishes run_interval as VO2max work", () => {
+    const r = rules(42.195);
+    expect(r.some(s => s.includes("run_interval") && (s.includes("VO2max") || s.includes("5K effort")))).toBe(true);
+  });
+
+  it("restricts intervals to Build/Peak phase only", () => {
+    const r = rules(42.195);
+    expect(r.some(s => s.includes("run_interval") && s.toLowerCase().includes("base"))).toBe(true);
+  });
+
+  it("threshold defined as 10–14km total", () => {
+    const r = rules(42.195);
+    expect(r.some(s => s.includes("run_threshold") && s.includes("10–14km"))).toBe(true);
+  });
+
+  // Marathon-specific rules
+  describe("marathon", () => {
+    it("long run progresses independently (no percentage cap)", () => {
+      const r = rules(42.195);
+      expect(r.some(s => s.toLowerCase().includes("independently"))).toBe(true);
+      expect(r.some(s => s.includes("30–40%"))).toBe(false);
+    });
+
+    it("includes marathon-pace miles in long run during Build phase", () => {
+      const r = rules(42.195, "recreational", "130-145", buildPhase);
+      expect(r.some(s => s.toLowerCase().includes("marathon race pace"))).toBe(true);
+    });
+
+    it("does NOT include marathon-pace miles in long run during Base phase", () => {
+      const r = rules(42.195, "recreational", "130-145", basePhase);
+      expect(r.some(s => s.toLowerCase().includes("marathon race pace"))).toBe(false);
+    });
+
+    it("cross-training guidance recommends cycling/swimming, not CrossFit", () => {
+      const r = rules(42.195);
+      const crossTrainRule = r.find(s => s.toLowerCase().includes("cross"));
+      expect(crossTrainRule).toBeDefined();
+      expect(crossTrainRule.toLowerCase()).toMatch(/cycling|swimming/);
+      expect(crossTrainRule.toLowerCase()).toContain("no high-intensity crossfit");
+    });
+
+    it("includes marathon_pace session type guidance", () => {
+      const r = rules(42.195);
+      expect(r.some(s => s.includes("run_marathon_pace"))).toBe(true);
+    });
+  });
+
+  // Non-marathon keeps 30–40% long run rule
+  describe("half marathon", () => {
+    it("applies 30–40% long run cap", () => {
+      const r = rules(21.0975);
+      expect(r.some(s => s.includes("30–40%"))).toBe(true);
+    });
+
+    it("does NOT include marathon-pace session guidance", () => {
+      const r = rules(21.0975);
+      expect(r.some(s => s.includes("run_marathon_pace"))).toBe(false);
+    });
+  });
+
+  // Taper rules
+  it("includes taper volume drop percentages", () => {
+    const r = rules(42.195, "recreational", "130-145", taperPhase);
+    const taperRule = r.find(s => s.startsWith("Taper:"));
+    expect(taperRule).toBeDefined();
+    expect(taperRule).toMatch(/30%|50%|60%/);
+  });
+
+  // Easy HR in rules
+  it("uses easyHR value in easy run rule", () => {
+    const r = rules(42.195, "recreational", "140-155");
+    expect(r.some(s => s.includes("140-155"))).toBe(true);
+  });
+
+  it("falls back to 'below 145' when easyHR is empty", () => {
+    const r = buildCoachingRules(42.195, "recreational", "", buildPhase);
+    expect(r.some(s => s.includes("below 145"))).toBe(true);
+  });
+
+  // mainSet rule always present
+  it("always includes mainSet specificity rule", () => {
+    const r = rules(42.195);
+    expect(r.some(s => s.includes("mainSet"))).toBe(true);
+  });
 });
