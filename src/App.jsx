@@ -4,6 +4,7 @@ import { loadUserData, saveUserData } from "./db.js";
 import {
   DAY_LABELS, SESSION_TYPES, SESSION_COLORS, SESSION_LABELS, RACE_DISTANCES,
   MARATHON_DEFAULT_SCHEDULE, getTrainingPhase, getDistanceGuidance, buildCoachingRules, getAllCoachingRules,
+  getDaySessionType, getRotationLabel,
   parsePace, secsTopace, computeRacePace, computeGoalTime, computeTrainingPaces,
   getWeekStart, getCurrentWeekStart, getPlannedDay, getAutoLink,
   getWeeksToRace, findLinkedSession, findLinkedSessions, sessionsForWeek, sessionInWeek,
@@ -58,6 +59,7 @@ const defaultProfile = {
   name:"", goal:"", goalCustom:"", goalCustomDist:"", goalDate:"", trainingStartDate:"", goalTime:"", garminPredicted:"", racePace:"",
   easyHR:"", experience:"", injuries:[],
   schedule:{ Mon:"rest", Tue:"run_threshold", Wed:"crossfit", Thu:"run_easy", Fri:"crossfit", Sat:"crossfit", Sun:"run_long" },
+  scheduleRotations:{},
 };
 
 function loadStore() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; } catch { return {}; } }
@@ -2109,6 +2111,9 @@ function ProfileScreen({ store, persist, onSaved, isDevMode, onSignOut }) {
   const [draft, setDraft] = useState(()=>({...defaultProfile,...store.profile}));
   const set = (k,v) => setDraft(prev=>({...prev,[k]:v}));
   const setSchedule = (day,val) => setDraft(prev=>({...prev,schedule:{...prev.schedule,[day]:val}}));
+  const setRotation = (day,arr) => setDraft(prev=>({...prev,scheduleRotations:{...(prev.scheduleRotations||{}),[day]:arr}}));
+  const addToRotation = (day,type) => setRotation(day,[...(draft.scheduleRotations?.[day]||[]),type]);
+  const removeFromRotation = (day,idx) => setRotation(day,(draft.scheduleRotations?.[day]||[]).filter((_,i)=>i!==idx));
   const [scheduleEditMode, setScheduleEditMode] = useState(false);
   const [schedulePickerDay, setSchedulePickerDay] = useState(null);
   // Race pace: auto or manual override
@@ -2289,27 +2294,96 @@ function ProfileScreen({ store, persist, onSaved, isDevMode, onSignOut }) {
             const type = draft.schedule?.[day]||"rest";
             const color = SESSION_COLORS[type]||"#888780";
             const label = SESSION_LABELS[type]||type;
+            const rotation = draft.scheduleRotations?.[day]||[];
+            const hasRotation = rotation.length >= 2;
             const isOpen = scheduleEditMode && schedulePickerDay===day;
             return (
               <div key={day} style={{ marginBottom:6,borderRadius:8,border:isOpen?`1.5px solid ${color}`:"1px solid #eee",overflow:"hidden" }}>
+                {/* Day header row */}
                 <div onClick={()=>scheduleEditMode&&setSchedulePickerDay(isOpen?null:day)}
                   style={{ display:"flex",alignItems:"center",gap:10,padding:"10px 12px",cursor:scheduleEditMode?"pointer":"default",background:isOpen?`${color}0d`:"#fff" }}>
-                  <div style={{ width:8,height:8,borderRadius:"50%",background:color,flexShrink:0 }}/>
+                  <div style={{ width:8,height:8,borderRadius:"50%",background:hasRotation?"transparent":color,flexShrink:0,
+                    border:hasRotation?`2px solid ${color}`:"none" }}/>
                   <span style={{ fontSize:12,fontWeight:700,width:34,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.05em" }}>{day}</span>
-                  <span style={{ fontSize:14,color:"#1a1a1a",flex:1 }}>{label}</span>
+                  <div style={{ flex:1 }}>
+                    <span style={{ fontSize:14,color:"#1a1a1a" }}>{label}</span>
+                    {hasRotation&&(
+                      <div style={{ fontSize:11,color:"#aaa",marginTop:2 }}>
+                        ↻ {rotation.map(t=>SESSION_LABELS[t]||t).join(" → ")}
+                      </div>
+                    )}
+                  </div>
                   {scheduleEditMode&&<span style={{ fontSize:11,color:isOpen?color:"#ccc" }}>{isOpen?"▾":"✎"}</span>}
                 </div>
+
+                {/* Expanded editor */}
                 {isOpen&&(
-                  <div style={{ padding:"8px 12px 12px",borderTop:`1px solid ${color}22`,display:"flex",flexWrap:"wrap",gap:6 }}>
-                    {SESSION_TYPES.map(t=>(
-                      <button key={t} onClick={()=>{ setSchedule(day,t); setSchedulePickerDay(null); }}
-                        style={{ padding:"5px 12px",borderRadius:16,border:"none",
-                          background:type===t?SESSION_COLORS[t]:"#ebebeb",
-                          color:type===t?"#fff":"#333",
-                          fontSize:12,fontWeight:600,cursor:"pointer" }}>
-                        {SESSION_LABELS[t]}
-                      </button>
-                    ))}
+                  <div style={{ borderTop:`1px solid ${color}22` }}>
+                    {/* Base type */}
+                    <div style={{ padding:"10px 12px 8px" }}>
+                      <div style={{ fontSize:10,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:7 }}>Base type</div>
+                      <div style={{ display:"flex",flexWrap:"wrap",gap:6 }}>
+                        {SESSION_TYPES.map(t=>(
+                          <button key={t} onClick={()=>setSchedule(day,t)}
+                            style={{ padding:"5px 12px",borderRadius:16,border:"none",
+                              background:type===t?SESSION_COLORS[t]:"#ebebeb",
+                              color:type===t?"#fff":"#333",
+                              fontSize:12,fontWeight:600,cursor:"pointer" }}>
+                            {SESSION_LABELS[t]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Rotation pool */}
+                    <div style={{ padding:"0 12px 12px",borderTop:"1px solid #f5f5f3" }}>
+                      <div style={{ fontSize:10,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",margin:"10px 0 7px",display:"flex",alignItems:"center",gap:6 }}>
+                        <span>Rotation pool</span>
+                        <span style={{ fontSize:9,fontWeight:400,color:"#bbb",textTransform:"none",letterSpacing:0 }}>cycles week-by-week in order</span>
+                      </div>
+
+                      {/* Current pool chips */}
+                      {rotation.length>0?(
+                        <div style={{ display:"flex",flexWrap:"wrap",gap:6,marginBottom:8 }}>
+                          {rotation.map((t,i)=>(
+                            <div key={i} style={{ display:"flex",alignItems:"center",gap:3,background:SESSION_COLORS[t]||"#888",borderRadius:14,padding:"3px 6px 3px 10px" }}>
+                              <span style={{ fontSize:11,fontWeight:700,color:"#fff" }}>{i+1}. {SESSION_LABELS[t]||t}</span>
+                              <button onClick={()=>removeFromRotation(day,i)}
+                                style={{ background:"rgba(255,255,255,0.25)",border:"none",borderRadius:"50%",width:16,height:16,
+                                  display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"#fff",
+                                  fontSize:12,lineHeight:1,padding:0,flexShrink:0 }}>×</button>
+                            </div>
+                          ))}
+                        </div>
+                      ):(
+                        <div style={{ fontSize:12,color:"#bbb",marginBottom:8 }}>No rotation — add types to cycle this day weekly</div>
+                      )}
+
+                      {/* Add type buttons */}
+                      <div style={{ display:"flex",flexWrap:"wrap",gap:5 }}>
+                        {SESSION_TYPES.filter(t=>!rotation.includes(t)).map(t=>(
+                          <button key={t} onClick={()=>addToRotation(day,t)}
+                            style={{ padding:"4px 10px",borderRadius:14,border:`1.5px dashed ${SESSION_COLORS[t]||"#aaa"}`,
+                              background:"transparent",color:SESSION_COLORS[t]||"#555",
+                              fontSize:11,fontWeight:600,cursor:"pointer" }}>
+                            + {SESSION_LABELS[t]}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Rotation preview */}
+                      {rotation.length>=2&&(
+                        <div style={{ marginTop:10,padding:"8px 10px",borderRadius:6,background:"#f8f8f8" }}>
+                          <div style={{ fontSize:10,color:"#aaa",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:5 }}>Week preview</div>
+                          {rotation.map((t,i)=>(
+                            <div key={i} style={{ display:"flex",alignItems:"center",gap:8,marginBottom:3 }}>
+                              <span style={{ fontSize:10,color:"#aaa",width:56 }}>Weeks {i+1},{i+1+rotation.length},…</span>
+                              <span style={{ fontSize:12,fontWeight:600,color:SESSION_COLORS[t]||"#555" }}>{SESSION_LABELS[t]||t}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -2570,7 +2644,22 @@ SCORE_JSON`);
   async function buildWeekPlanGoals(weekStart, { prevWeekPlan, weekNumber, totalWeeks } = {}) {
     const p = store.profile;
     const goalLabel = p.goal==="Custom..."?p.goalCustom:p.goal;
-    const effectiveSchedule = (store.weekScheduleOverrides||{})[weekStart] || p.schedule;
+    const hasWeekOverride = !!(store.weekScheduleOverrides||{})[weekStart];
+    const baseSchedule = (store.weekScheduleOverrides||{})[weekStart] || p.schedule;
+
+    // Apply rotation only when using the default profile schedule (not a week-specific override)
+    const rotationAwareSchedule = {};
+    DAY_LABELS.forEach(day => {
+      rotationAwareSchedule[day] = hasWeekOverride
+        ? (baseSchedule[day] || "rest")
+        : getDaySessionType(day, weekNumber || 1, p.schedule, p.scheduleRotations);
+    });
+    const effectiveSchedule = rotationAwareSchedule;
+
+    // Describe any rotating days for the AI so it understands why the type changed
+    const rotationContext = !hasWeekOverride
+      ? DAY_LABELS.map(day => getRotationLabel(day, weekNumber || 1, p.scheduleRotations)).filter(Boolean)
+      : [];
 
     const recentSessions = (store.sessions||[])
       .sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5)
@@ -2627,7 +2716,7 @@ Athlete profile:
 - Goal: ${goalLabel}${raceDist ? ` (${raceDist}km)` : ""} in ${p.goalTime}${p.goalDate?` on ${p.goalDate}`:""}
 - Level: ${p.experience}
 - Threshold pace: ${profileTrainingPaces(p).threshold}/km | Race pace: ${p.racePace}/km | Long run pace: ${profileTrainingPaces(p).longRun}/km | Easy HR: ${p.easyHR} bpm${p.garminPredicted ? ` (training paces from Garmin predicted ${p.garminPredicted})` : ""}
-- Schedule (FIXED — use exactly these session types in daySessions): ${JSON.stringify(effectiveSchedule)}
+- Schedule (FIXED — use exactly these session types in daySessions): ${JSON.stringify(effectiveSchedule)}${rotationContext.length ? `\n- Day rotations this week: ${rotationContext.join("; ")}` : ""}
 - Injuries: ${injuriesToText(p.injuries)}
 
 Recent sessions:
