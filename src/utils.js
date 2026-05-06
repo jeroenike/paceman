@@ -3,18 +3,18 @@
 
 export const DAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 
-export const SESSION_TYPES = ["rest","run_threshold","run_easy","run_long","run_medium_long","run_marathon_pace","crossfit","run_interval"];
+export const SESSION_TYPES = ["rest","run_threshold","run_easy","run_long","run_medium_long","run_marathon_pace","run_hills","crossfit","run_interval"];
 
 export const SESSION_COLORS = {
   rest:"#888780", run_threshold:"#1B6FE8", run_easy:"#0F6E56",
   run_long:"#3B6D11", run_medium_long:"#5A8A1E", run_marathon_pace:"#C2610A",
-  crossfit:"#993C1D", run_interval:"#7C3AED",
+  run_hills:"#8B5E3C", crossfit:"#993C1D", run_interval:"#7C3AED",
 };
 
 export const SESSION_LABELS = {
   rest:"Rest", run_threshold:"Threshold", run_easy:"Easy Run",
   run_long:"Long Run", run_medium_long:"Medium Long", run_marathon_pace:"Marathon Pace",
-  crossfit:"CrossFit", run_interval:"Intervals",
+  run_hills:"Hill Repeats", crossfit:"CrossFit", run_interval:"Intervals",
 };
 
 export const MARATHON_DEFAULT_SCHEDULE = {
@@ -644,7 +644,7 @@ export function validateSchedule(schedule, scheduleRotations, raceDist) {
       message: hasIntervalAnywhere
         ? "Interval sessions are included in the schedule or a rotation pool"
         : "No interval sessions (VO2max work) anywhere in schedule or rotation pools",
-      fix: hasIntervalAnywhere ? null : "Add run_interval to Tuesday's rotation pool",
+      fix: hasIntervalAnywhere ? null : "Add 'Intervals' to Tuesday's rotation pool",
     });
 
     // ── 7. Medium-long run present ─────────────────────────────────────────
@@ -671,7 +671,7 @@ export function validateSchedule(schedule, scheduleRotations, raceDist) {
           ? "Thursday medium-long run has a rotation pool"
           : "Thursday medium-long has no rotation — same stimulus every week",
         fix: thuRotation.length < 2
-          ? "Add rotation on Thursday: e.g. steady finish, rolling terrain, mid-run MP block"
+          ? "Rotate Thursday between: Medium Long → Marathon Pace → Hill Repeats (or Easy Run)"
           : null,
       });
     }
@@ -685,7 +685,7 @@ export function validateSchedule(schedule, scheduleRotations, raceDist) {
       message: hasMPAnywhere
         ? "Marathon pace sessions are included in the schedule or a rotation pool"
         : "No marathon pace sessions anywhere in schedule or rotation pools",
-      fix: hasMPAnywhere ? null : "Add run_marathon_pace to Tuesday's rotation pool",
+      fix: hasMPAnywhere ? null : "Add 'Marathon Pace' to Tuesday's rotation pool",
     });
   }
 

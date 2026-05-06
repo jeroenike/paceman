@@ -536,13 +536,13 @@ function buildPrintHTML(profile, weekPlans) {
   const typeColors = {
     rest:"#888780", run_threshold:"#1B6FE8", run_easy:"#0F6E56",
     run_long:"#3B6D11", run_medium_long:"#5A8A1E", run_marathon_pace:"#C2610A",
-    crossfit:"#993C1D", run_interval:"#7C3AED",
+    run_hills:"#8B5E3C", crossfit:"#993C1D", run_interval:"#7C3AED",
   };
 
   const typeLabels = {
     rest:"Rest", run_threshold:"Threshold", run_easy:"Easy Run",
     run_long:"Long Run", run_medium_long:"Medium Long", run_marathon_pace:"Marathon Pace",
-    crossfit:"Cross-Train", run_interval:"Intervals",
+    run_hills:"Hill Repeats", crossfit:"Cross-Train", run_interval:"Intervals",
   };
 
   function splitMainSet(mainSet) {
@@ -753,7 +753,7 @@ function CoachingRulesModal({ profile, onClose }) {
 
 // ── Home Screen ──
 
-function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGeneratePlan, onGenerateAllPlans, onGoProfile, onSaveScheduleOverride, onSaveSession, onSetDayIntensity, onSetDayInjury }) {
+function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGeneratePlan, onGoProfile, onSaveScheduleOverride, onSaveSession, onSetDayIntensity, onSetDayInjury }) {
   const [activeWeekStart, setActiveWeekStart] = useState(getCurrentWeekStart);
   const [scheduleEdit, setScheduleEdit] = useState(false);
   const [showRulesModal, setShowRulesModal] = useState(false);
@@ -926,12 +926,6 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
             style={{ width:"100%",padding:14,borderRadius:10,background:loading?"#ccc":"#1B6FE8",color:"white",border:"none",fontSize:15,fontWeight:700,cursor:loading?"default":"pointer" }}>
             {loading&&!loadingMsg?"Generating…":hasPlan?"Regenerate This Week":"Generate This Week"}
           </button>
-          {store.profile.goalDate&&(
-            <button onClick={onGenerateAllPlans} disabled={loading}
-              style={{ width:"100%",padding:12,borderRadius:10,background:loading?"#ccc":"#0F6E56",color:"white",border:"none",fontSize:14,fontWeight:700,cursor:loading?"default":"pointer" }}>
-              {loadingMsg||"Generate Full Plan to Race Day"}
-            </button>
-          )}
         </div>
       ));})()}
 
@@ -2058,7 +2052,7 @@ function ProgressScreen({ store }) {
 
 // ── Profile Screen ──
 
-function ProfileScreen({ store, persist, onSaved, isDevMode, onSignOut }) {
+function ProfileScreen({ store, persist, onSaved, isDevMode, onSignOut, onGenerateAllPlans, loading, loadingMsg }) {
   const [draft, setDraft] = useState(()=>({...defaultProfile,...store.profile}));
   const set = (k,v) => setDraft(prev=>({...prev,[k]:v}));
   const setSchedule = (day,val) => setDraft(prev=>({...prev,schedule:{...prev.schedule,[day]:val}}));
@@ -2389,6 +2383,41 @@ function ProfileScreen({ store, persist, onSaved, isDevMode, onSignOut }) {
           style={{ padding:14,borderRadius:10,background:"#1B6FE8",color:"white",border:"none",fontSize:15,fontWeight:700,cursor:"pointer" }}>
           Save Profile
         </button>
+
+        {/* Generate Full Plan section */}
+        {draft.goalDate&&onGenerateAllPlans&&(()=>{
+          const currentHash = JSON.stringify({schedule:draft.schedule, scheduleRotations:draft.scheduleRotations||{}});
+          const storedHash = store.planScheduleHash;
+          const hasPlans = (store.weekPlans||[]).some(p=>p.weekGoals);
+          const scheduleChanged = hasPlans && storedHash && currentHash !== storedHash;
+          const unsavedChanges = JSON.stringify(draft.schedule) !== JSON.stringify(store.profile.schedule) ||
+            JSON.stringify(draft.scheduleRotations||{}) !== JSON.stringify(store.profile.scheduleRotations||{});
+          return (
+            <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
+              {scheduleChanged&&(
+                <div style={{ padding:"10px 14px",borderRadius:8,background:"#fffbeb",border:"1px solid #f5c518",display:"flex",gap:8,alignItems:"flex-start" }}>
+                  <span style={{ fontSize:14,flexShrink:0 }}>⚠️</span>
+                  <span style={{ fontSize:12,color:"#7a5a00",lineHeight:1.4 }}>
+                    Schedule changed since last plan generation. Regenerate to apply the new schedule to all weeks.
+                  </span>
+                </div>
+              )}
+              {unsavedChanges&&(
+                <div style={{ padding:"10px 14px",borderRadius:8,background:"#f0f5ff",border:"1px solid #b0c8f8",display:"flex",gap:8,alignItems:"flex-start" }}>
+                  <span style={{ fontSize:14,flexShrink:0 }}>💾</span>
+                  <span style={{ fontSize:12,color:"#1a3a7a",lineHeight:1.4 }}>
+                    Save your profile first before generating to apply the latest changes.
+                  </span>
+                </div>
+              )}
+              <button onClick={onGenerateAllPlans} disabled={loading}
+                style={{ padding:14,borderRadius:10,background:loading?"#ccc":"#0F6E56",color:"white",border:"none",fontSize:15,fontWeight:700,cursor:loading?"default":"pointer" }}>
+                {loadingMsg||(hasPlans?"Regenerate Full Plan to Race Day":"Generate Full Plan to Race Day")}
+              </button>
+            </div>
+          );
+        })()}
+
         {store.sessions?.length>0&&(
           <button onClick={()=>{ if(window.confirm("Clear all session history?")) persist({sessions:[],weekPlans:[]}); }}
             style={{ padding:12,borderRadius:10,background:"none",color:"#c00",border:"1px solid #fcc",fontSize:14,cursor:"pointer" }}>
@@ -2735,9 +2764,10 @@ WEEKGOALS_JSON
 }
 WEEKGOALS_JSON
 
-session_type must be one of: rest, run_threshold, run_easy, run_long, run_medium_long, run_marathon_pace, crossfit, run_interval.
+session_type must be one of: rest, run_threshold, run_easy, run_long, run_medium_long, run_marathon_pace, run_hills, crossfit, run_interval.
 - run_medium_long: mid-week run 15–20km at easy to marathon pace, builds endurance without full long-run recovery cost
 - run_marathon_pace: sustained running at goal race pace, 10–18km total, race-specificity for marathon training
+- run_hills: hill repeats session — 6–10×60–90s hard uphill efforts with jog-down recovery; builds eccentric quad strength and running economy
 Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.`;
 
     const r = await callClaude("You are an elite running coach AI. Output valid JSON only — no markdown, no prose.", prompt);
@@ -2944,6 +2974,8 @@ DAY_JSON`
         // Brief pause between weeks to avoid rate limiting
         if (i < weeks.length - 1) await new Promise(r => setTimeout(r, 500));
       }
+      const p = store.profile;
+      persist({ weekPlans:allPlans, planScheduleHash:JSON.stringify({schedule:p.schedule, scheduleRotations:p.scheduleRotations||{}}) });
     } catch(e) { setError(e.message); }
     finally { setLoading(false); setLoadingMsg(""); }
   }
@@ -2991,11 +3023,11 @@ Include: exact paces, HR zones (bpm), cadence targets, rep structure, rest.`);
             <button onClick={()=>setMigrated(false)} style={{ background:"none",border:"none",color:"#0a6640",cursor:"pointer",fontSize:18,padding:0,lineHeight:1 }}>×</button>
           </div>
         )}
-        {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} loadingMsg={loadingMsg} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onGenerateAllPlans={generateAllPlans} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={handleScheduleOverride} onSaveSession={saveSession} onSetDayIntensity={handleSetDayIntensity} onSetDayInjury={handleSetDayInjury}/>}
+        {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} loadingMsg={loadingMsg} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={handleScheduleOverride} onSaveSession={saveSession} onSetDayIntensity={handleSetDayIntensity} onSetDayInjury={handleSetDayInjury}/>}
         {screen==="session"&&<SessionScreen store={store} activeDay={activeDay} loading={loading} error={error} aiText={aiText} onBack={()=>{ setScreen("home"); setAiText(""); setActiveDay(null); }}/>}
         {screen==="log"&&<LogScreen store={store} loading={loading} error={error} aiText={aiText} stravaLoading={stravaLoading} stravaActivities={stravaActivities} onImportStrava={importFromStrava} onSaveSession={saveSession} onBulkSave={bulkSaveSessions} onBulkDelete={bulkDeleteSessions} onAnalyze={analyzeSession} editingSession={editingSession} setEditingSession={setEditingSession} onSetDayInjury={handleSetDayInjury}/>}
         {screen==="progress"&&<ProgressScreen store={store}/>}
-        {screen==="profile"&&<ProfileScreen store={store} persist={persist} onSaved={()=>setScreen("home")} isDevMode={isDevMode} onSignOut={supabaseConfigured ? ()=>supabase.auth.signOut() : null}/>}
+        {screen==="profile"&&<ProfileScreen store={store} persist={persist} onSaved={()=>setScreen("home")} isDevMode={isDevMode} onSignOut={supabaseConfigured ? ()=>supabase.auth.signOut() : null} onGenerateAllPlans={generateAllPlans} loading={loading} loadingMsg={loadingMsg}/>}
       </div>
       <NavBar screen={screen} onNav={handleNav}/>
     </div>
