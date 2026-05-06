@@ -519,8 +519,12 @@ function WeekScheduleEditor({ weekStart, profile, weekScheduleOverrides, onSave 
 
 function buildPrintHTML(profile, weekPlans) {
   const goalLabel = profile.goal === "Custom..." ? profile.goalCustom : profile.goal;
+  const trainingStartWeek = profile.trainingStartDate
+    ? getWeekStart(new Date(profile.trainingStartDate + "T00:00:00"))
+    : null;
   const sorted = [...weekPlans]
     .filter(p => p.weekGoals)
+    .filter(p => !trainingStartWeek || p.weekStart >= trainingStartWeek)
     .sort((a, b) => a.weekStart.localeCompare(b.weekStart));
   const totalWeeks = sorted.length;
 
