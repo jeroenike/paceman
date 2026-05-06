@@ -13,6 +13,7 @@ import {
   isDayAfterRace, isDayRaceDay, isWeekInPast,
   secsToTime, computePlanDeltas, computeRaceProjection,
   normalizeInjuries, injuriesToText,
+  deriveEasyPace, computeLongRunTarget, applyPhaseSchedule,
 } from "./utils.js";
 import { DEV_SEED, DEV_SEED_GREEN, DEV_SEED_ORANGE, DEV_SEED_RED } from "./dev-seed.js";
 
@@ -590,6 +591,26 @@ function buildPrintHTML(profile, weekPlans) {
     const daysHTML = DAY_LABELS.map((day, di) => {
       const dd = new Date(ws); dd.setDate(ws.getDate() + di);
       const dateStr = dd.toLocaleDateString("en-GB", { day:"numeric", month:"short" });
+      const ddIso = `${dd.getFullYear()}-${String(dd.getMonth()+1).padStart(2,"0")}-${String(dd.getDate()).padStart(2,"0")}`;
+
+      // Skip days strictly after race day
+      if (profile.goalDate && ddIso > profile.goalDate) return "";
+
+      // Race day — render the race itself, never the AI's session for Sunday
+      if (profile.goalDate && ddIso === profile.goalDate) {
+        const raceDist = RACE_DISTANCES[profile.goal]
+          || (profile.goal === "Custom..." && profile.goalCustomDist ? parseFloat(profile.goalCustomDist) : null);
+        const distLabel = raceDist === 42.195 ? "42.195 km marathon"
+                         : raceDist === 21.0975 ? "21.0975 km half marathon"
+                         : raceDist ? `${raceDist} km` : (goalLabel || "race");
+        const paceLabel = profile.racePace ? ` @ ${profile.racePace}/km` : "";
+        return `<tr class="dr raceday">
+          <td class="dl"><b>${day}</b><span>${dateStr}</span></td>
+          <td class="dtp"><span class="tb" style="color:#b07000;border-color:#e8a020">RACE DAY</span></td>
+          <td class="dm">🏁 ${distLabel}${paceLabel} — execute the plan.</td>
+        </tr>`;
+      }
+
       const session = g.daySessions?.[day];
       const type = session?.type || (profile.schedule?.[day] || "rest");
       const mainSet = session?.mainSet || null;
@@ -678,6 +699,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-se
 .dr{border-top:0.5pt solid #f0f0e8}
 .dr:first-child{border-top:none}
 .rest .dl,.rest .dm{color:#bbb}
+.raceday{background:linear-gradient(90deg,#fff8ed 0%,#fff3d6 100%)}
+.raceday .dl b,.raceday .dm{color:#8a5a00;font-weight:700}
 
 /* Day label */
 .dl{width:46pt;padding:4pt 5pt 4pt 8pt;vertical-align:top;white-space:nowrap}
@@ -2677,7 +2700,6 @@ SCORE_JSON`);
         ? (baseSchedule[day] || "rest")
         : getDaySessionType(day, weekNumber || 1, p.schedule, p.scheduleRotations);
     });
-    const effectiveSchedule = rotationAwareSchedule;
 
     // Describe any rotating days for the AI so it understands why the type changed
     const rotationContext = !hasWeekOverride
@@ -2710,26 +2732,43 @@ SCORE_JSON`);
     const distanceGuidance = getDistanceGuidance(raceDist, p.experience);
     const coachingRules = buildCoachingRules(raceDist, p.experience, p.easyHR, phase);
 
-    // Explicit long run floor for marathon — stated separately from rules so the AI cannot miss it
+    // Phase-aware schedule: recovery weeks downgrade quality+hills to easy;
+    // taper/race weeks downgrade hills+intervals to easy. Day pattern (which
+    // days are run vs rest vs cross) and the user's stored profile schedule
+    // are never mutated.
+    const effectiveSchedule = applyPhaseSchedule(rotationAwareSchedule, phase?.key);
+    const swappedDays = DAY_LABELS
+      .filter(d => effectiveSchedule[d] !== rotationAwareSchedule[d])
+      .map(d => `${d}: ${SESSION_LABELS[rotationAwareSchedule[d]] || rotationAwareSchedule[d]} → ${SESSION_LABELS[effectiveSchedule[d]] || effectiveSchedule[d]}`);
+
+    // Deterministic long-run target — computed in JS so weeks can never share
+    // an identical long-run distance unless intentionally so.
+    const longRunTarget = isMarathon
+      ? computeLongRunTarget(raceDist, p.experience, weekNumber, totalWeeks, phase?.key, weeksToRace)
+      : null;
+
     const longRunConstraint = (() => {
-      if (!isMarathon) return null;
-      const exp = p.experience;
-      const phaseKey = phase?.key;
-      if (phaseKey === "peak") {
-        const min = exp === "club_athlete" ? 34 : exp === "competitive_recreational" ? 32 : 30;
-        const max = exp === "club_athlete" ? 38 : exp === "competitive_recreational" ? 35 : 32;
-        return `MANDATORY PEAK LONG RUN: Sunday long run MUST be ${min}–${max}km. Setting longRunDistance below ${min} is incorrect for this phase. Do not generate a 24km long run in peak week.`;
+      if (!longRunTarget) return null;
+      if (longRunTarget.isRace) {
+        return `MANDATORY RACE WEEK LONG RUN: Sunday is the marathon (42.195 km @ ${p.racePace || "race"}/km). Do NOT generate a Sunday training session — set daySessions.Sun.type to "run_long" with mainSet exactly: "RACE DAY: 42.195 km marathon at ${p.racePace || "goal race"}/km". longRunDistance MUST be 42.195. No additional Sunday workout.`;
       }
-      if (phaseKey === "build") {
-        if (weekNumber && totalWeeks) {
-          const progress = weekNumber / totalWeeks;
-          if (progress >= 0.7) return `LATE BUILD LONG RUN: Sunday run should be 27–30km with a 10–12km marathon pace finish.`;
-          if (progress >= 0.5) return `MID BUILD LONG RUN: Sunday run should be 24–28km with a 8–10km marathon pace finish.`;
-          return `EARLY BUILD LONG RUN: Sunday run should be 20–24km with a 6–8km marathon pace finish.`;
-        }
-      }
-      return null;
+      const mp = longRunTarget.mpFinishKm;
+      const mpClause = mp > 0
+        ? ` with a ${mp} km finish at goal race pace (${p.racePace || "race pace"}/km)`
+        : ` at long-run pace only — NO marathon-pace segment this week`;
+      return `MANDATORY LONG RUN THIS WEEK: Sunday long run MUST be exactly ${longRunTarget.longRunKm} km${mpClause}. Set longRunDistance to ${longRunTarget.longRunKm}. Two consecutive non-recovery weeks must NOT share the same long-run distance.`;
     })();
+
+    // Pace pinning — derived once per week so MP and easy bands are consistent.
+    const easyBand = deriveEasyPace(p.racePace);
+    const pacePinConstraint = isMarathon && p.racePace
+      ? [
+          `MANDATORY MP PACE: every run_marathon_pace session and every MP segment inside a long run MUST be prescribed at exactly ${p.racePace}/km (tight band ${p.racePace} ± 3 sec/km). Do NOT prescribe paces slower than ${p.racePace}/km for MP work.`,
+          easyBand
+            ? `MANDATORY EASY PACE BAND: every run_easy session MUST use the band ${easyBand.min}–${easyBand.max}/km (HR-capped at ${p.easyHR || "easy zone"} bpm). Do not vary this band week-to-week.`
+            : null,
+        ].filter(Boolean).join("\n")
+      : null;
 
     // Phase-specific mandatory constraints injected above coaching rules so the AI cannot deprioritize them
     const phaseConstraints = (() => {
@@ -2739,6 +2778,9 @@ SCORE_JSON`);
       if (phaseKey === "base") {
         c.push("MANDATORY BASE PHASE: Only run_easy, run_hills, or rest this week. NO run_threshold, NO run_marathon_pace, NO run_interval. Violating this causes overtraining in the foundation phase.");
       }
+      if (phaseKey === "recovery") {
+        c.push("MANDATORY RECOVERY WEEK: Easy effort only. NO run_threshold, NO run_marathon_pace, NO run_interval, NO run_hills. Quality slots from the user's profile have already been downgraded to run_easy in the schedule below — keep them as run_easy. Drop weekly volume 20–25% vs the previous non-recovery week.");
+      }
       if (phaseKey === "build" || phaseKey === "peak") {
         c.push("MANDATORY MP STACKING RULE: run_marathon_pace is a HARD session. Max 2 hard sessions total (run_threshold + run_interval + run_marathon_pace). If Sunday long run includes MP → Thursday must NOT be run_marathon_pace. Never assign MP to both Tuesday AND Thursday in the same week.");
       }
@@ -2746,7 +2788,10 @@ SCORE_JSON`);
         c.push("MANDATORY PEAK MP LIMIT: Max 1 dedicated MP session on Tuesday OR Thursday (never both). Long run MP segment counts as the second hard session. No triple MP configuration (Tue+Thu+Sun).");
       }
       if (phaseKey === "taper") {
-        c.push("MANDATORY TAPER RULE: NO run_interval (no 5K-pace work) this week. Quality session must use run_threshold or run_marathon_pace with reduced volume — short MP blocks (3–6km) or strides only.");
+        c.push("MANDATORY TAPER RULE: NO run_interval (no 5K-pace work) and NO run_hills this week. Quality session must use run_threshold or run_marathon_pace with reduced volume — short MP blocks (3–6km) or strides only.");
+      }
+      if (phaseKey === "race") {
+        c.push(`MANDATORY RACE WEEK: Sunday IS the marathon — daySessions.Sun must be {"type":"run_long","mainSet":"RACE DAY: 42.195 km marathon at ${p.racePace || "goal race"}/km"}. Mon=rest. Tue=5–6 km easy + 4×100 m strides. Wed=4–5 km easy. Thu=4–5 km incl. 1–2 km @ ${p.racePace || "race"}/km + 4 strides. Fri=rest. Sat=20–25 min very easy + 2–3 strides. NO hills, NO intervals, NO long training run, NO threshold. runsPlanned MUST equal the count of run-type days in daySessions including Sunday.`);
       }
       return c;
     })();
@@ -2758,13 +2803,13 @@ ${prevWeekSummary ? `\n${prevWeekSummary}\n` : ""}
 Athlete profile:
 - Goal: ${goalLabel}${raceDist ? ` (${raceDist}km)` : ""} in ${p.goalTime}${p.goalDate?` on ${p.goalDate}`:""}
 - Level: ${p.experience}
-- Threshold pace: ${profileTrainingPaces(p).threshold}/km | Race pace: ${p.racePace}/km | Long run pace: ${profileTrainingPaces(p).longRun}/km | Easy HR: ${p.easyHR} bpm${p.garminPredicted ? ` (training paces from Garmin predicted ${p.garminPredicted})` : ""}
-- Schedule (FIXED — use exactly these session types in daySessions): ${JSON.stringify(effectiveSchedule)}${rotationContext.length ? `\n- Day rotations this week: ${rotationContext.join("; ")}` : ""}
+- Threshold pace: ${profileTrainingPaces(p).threshold}/km | Race pace: ${p.racePace}/km | Long run pace: ${profileTrainingPaces(p).longRun}/km${easyBand ? ` | Easy pace band: ${easyBand.min}–${easyBand.max}/km` : ""} | Easy HR: ${p.easyHR} bpm${p.garminPredicted ? ` (training paces from Garmin predicted ${p.garminPredicted})` : ""}
+- Schedule (FIXED — use exactly these session types in daySessions): ${JSON.stringify(effectiveSchedule)}${swappedDays.length ? `\n- Phase downgrades applied (${phase?.name || "this phase"}): ${swappedDays.join("; ")}` : ""}${rotationContext.length ? `\n- Day rotations this week: ${rotationContext.join("; ")}` : ""}
 - Injuries: ${injuriesToText(p.injuries)}
 
 Recent sessions:
 ${recentSessions||"No sessions logged yet"}
-${longRunConstraint ? `\n${longRunConstraint}\n` : ""}${phaseConstraints.length ? `\n${phaseConstraints.join("\n")}\n` : ""}
+${longRunConstraint ? `\n${longRunConstraint}\n` : ""}${pacePinConstraint ? `\n${pacePinConstraint}\n` : ""}${phaseConstraints.length ? `\n${phaseConstraints.join("\n")}\n` : ""}
 Coaching rules:
 ${distanceGuidance ? `- ${distanceGuidance}\n` : ""}- ${coachingRules.join("\n- ")}
 
@@ -2835,13 +2880,25 @@ Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.
       const injuryCtx = dayInjuries?.length
         ? `\nTODAY'S PAIN AREAS: ${dayInjuries.join(", ")} — modify the session to protect these areas. Avoid movements that load them directly; suggest alternatives where relevant.`
         : "";
+      const easyBand = deriveEasyPace(p.racePace);
+      const pacePin = [
+        newType === "run_marathon_pace" && p.racePace
+          ? `MANDATORY: prescribe at exactly ${p.racePace}/km (tight band ${p.racePace} ± 3 sec/km). Never slower than ${p.racePace}/km.`
+          : null,
+        newType === "run_easy" && easyBand
+          ? `MANDATORY: prescribe at ${easyBand.min}–${easyBand.max}/km, HR-capped at ${p.easyHR || "easy zone"} bpm.`
+          : null,
+        newType === "run_long" && p.racePace
+          ? `Long-run pace at ${profileTrainingPaces(p).longRun}/km. Any MP segment in the long run MUST be at exactly ${p.racePace}/km.`
+          : null,
+      ].filter(Boolean).join("\n");
       const r = await callClaude(
         "You are an elite running coach AI. Output valid JSON only — no markdown, no prose.",
         `Generate a single training session for ${day}, week starting ${weekStart}.
 Session type: ${SESSION_LABELS[newType] || newType} (${newType})
-Athlete: ${goalLabel} in ${p.goalTime} | Threshold: ${profileTrainingPaces(p).threshold}/km | Race pace: ${p.racePace}/km | Long run pace: ${profileTrainingPaces(p).longRun}/km | Easy HR: ${p.easyHR} bpm | Level: ${p.experience}${p.garminPredicted ? ` | Current fitness: ${p.garminPredicted}` : ""}
+Athlete: ${goalLabel} in ${p.goalTime} | Threshold: ${profileTrainingPaces(p).threshold}/km | Race pace: ${p.racePace}/km | Long run pace: ${profileTrainingPaces(p).longRun}/km${easyBand ? ` | Easy band: ${easyBand.min}–${easyBand.max}/km` : ""} | Easy HR: ${p.easyHR} bpm | Level: ${p.experience}${p.garminPredicted ? ` | Current fitness: ${p.garminPredicted}` : ""}
 Week context: ${weekCtx}${intensityCtx}${injuryCtx}
-
+${pacePin ? `\n${pacePin}\n` : ""}
 Respond with ONLY this JSON:
 DAY_JSON
 { "type": "${newType}", "mainSet": "<specific targets: exact distance, pace, reps, rest periods, HR zone>" }

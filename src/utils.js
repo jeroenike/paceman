@@ -346,6 +346,118 @@ export function deriveLongRunPace(racePaceStr) {
 }
 
 /**
+ * Derive an easy-run pace band from race pace.
+ * Easy runs are HR-capped, but giving the AI a deterministic prescription
+ * window stops it inventing a fresh band each week (race pace + 60–90 sec/km).
+ * Returns { min, max } as "M:SS" strings, or null if input invalid.
+ */
+export function deriveEasyPace(racePaceStr) {
+  const secs = parsePace(racePaceStr);
+  if (!secs) return null;
+  return {
+    min: secsTopace(secs + 60),
+    max: secsTopace(secs + 90),
+  };
+}
+
+/**
+ * Compute the marathon long-run target for a given week, deterministically.
+ *
+ * Returns { longRunKm, mpFinishKm, isRace } or null when not applicable
+ * (non-marathon goal, or insufficient inputs).
+ *
+ * Periodisation:
+ *   race week                 → isRace=true, no training long run
+ *   taper (weeksToRace 3/2/1) → 75% / 55% / 40% of peak, MP segment shrinks
+ *   peak  (weeksToRace 4)     → experience peak, 12 km MP finish
+ *   build                     → linear ramp from base floor to peak − 2,
+ *                               MP segment grows 6 → 12 km
+ *   recovery                  → 75% of would-be build distance, no MP
+ *   base                      → near floor, no MP
+ */
+export function computeLongRunTarget(raceDist, experience, weekNumber, totalWeeks, phaseKey, weeksToRace) {
+  if (raceDist == null || raceDist < 42) return null;
+
+  const peak  = experience === "club_athlete"             ? 36
+              : experience === "competitive_recreational" ? 33 : 30;
+  const floor = experience === "club_athlete"             ? 22
+              : experience === "competitive_recreational" ? 20 : 18;
+
+  if (phaseKey === "race" || (typeof weeksToRace === "number" && weeksToRace <= 0)) {
+    return { longRunKm: null, mpFinishKm: null, isRace: true };
+  }
+
+  if (phaseKey === "taper") {
+    if (weeksToRace === 3) return { longRunKm: Math.round(peak * 0.75), mpFinishKm: 5, isRace: false };
+    if (weeksToRace === 2) return { longRunKm: Math.round(peak * 0.55), mpFinishKm: 3, isRace: false };
+    if (weeksToRace === 1) return { longRunKm: Math.round(peak * 0.40), mpFinishKm: 0, isRace: false };
+  }
+
+  if (phaseKey === "peak") {
+    return { longRunKm: peak, mpFinishKm: 12, isRace: false };
+  }
+
+  if (phaseKey === "base") {
+    const km = !weekNumber ? floor : Math.min(floor + 2, floor + Math.max(0, weekNumber - 1) * 2);
+    return { longRunKm: km, mpFinishKm: 0, isRace: false };
+  }
+
+  // build / recovery — linear ramp from base end to peak week
+  if (phaseKey === "build" || phaseKey === "recovery") {
+    if (!weekNumber || !totalWeeks) {
+      return { longRunKm: floor + 4, mpFinishKm: 8, isRace: false };
+    }
+    const baseEnd  = Math.ceil(totalWeeks / 3);          // last week of base
+    const peakWeek = Math.max(baseEnd + 1, totalWeeks - 4); // peak is 4 weeks before race
+    const buildSpan = Math.max(1, peakWeek - baseEnd);
+    const buildIdx  = Math.min(buildSpan, Math.max(1, weekNumber - baseEnd));
+    const ramp = floor + ((peak - 2 - floor) * buildIdx / buildSpan);
+
+    if (phaseKey === "recovery") {
+      return { longRunKm: Math.round(ramp * 0.75), mpFinishKm: 0, isRace: false };
+    }
+    const mpKm = Math.round(6 + (buildIdx / buildSpan) * 6);
+    return { longRunKm: Math.round(ramp), mpFinishKm: mpKm, isRace: false };
+  }
+
+  return null;
+}
+
+// Schedule overrides applied at prompt-time only — the user's stored profile
+// schedule is never mutated. Day pattern (run vs rest vs cross) is preserved;
+// only the *intensity* of the assigned run is downgraded.
+const HARD_QUALITY_TYPES   = new Set(["run_threshold", "run_interval", "run_marathon_pace"]);
+const FINAL_TAPER_BANNED   = new Set(["run_hills", "run_interval"]);
+
+/**
+ * Return a phase-aware copy of the user's schedule for prompt-time use.
+ *
+ *  - recovery week → quality types (threshold/intervals/MP) and hills are
+ *                    downgraded to run_easy. Run days stay run days.
+ *  - taper / race  → hills and intervals are downgraded to run_easy.
+ *                    No eccentric load and no VO2max work in the final
+ *                    14 days.
+ *  - other phases  → returned unchanged.
+ *
+ * The user's chosen day pattern (which days are run vs rest vs crossfit)
+ * is always preserved.
+ */
+export function applyPhaseSchedule(schedule, phaseKey) {
+  if (!schedule) return {};
+  const out = {};
+  for (const day of DAY_LABELS) {
+    let t = schedule[day] || "rest";
+    if (phaseKey === "recovery" && (HARD_QUALITY_TYPES.has(t) || t === "run_hills")) {
+      t = "run_easy";
+    } else if ((phaseKey === "taper" || phaseKey === "race") && FINAL_TAPER_BANNED.has(t)) {
+      t = "run_easy";
+    }
+    out[day] = t;
+  }
+  return out;
+}
+
+/**
  * Normalize injuries to [{area, severity}] format.
  * Handles legacy string[] data stored before severity was added.
  */
@@ -737,6 +849,14 @@ export function buildCoachingRules(raceDist, experience, easyHR, phase) {
   if (isMarathon) {
     rules.push("Long run progresses independently as the primary adaptation driver — percentage cap does not apply for marathon");
 
+    if (phaseKey === "recovery") {
+      rules.push("RECOVERY PHASE RESTRICTION: easy effort only. NO run_threshold, NO run_marathon_pace, NO run_interval, NO run_hills. Quality slots scheduled on the user's profile must be replaced with run_easy this week. Drop weekly volume 20–25% vs the previous non-recovery week. Long run is shortened to ~75% of the prior progression.");
+    }
+
+    if (phaseKey === "race") {
+      rules.push("RACE WEEK STRUCTURE: Sunday is the marathon itself — daySessions.Sun is the race, not a training session. Mon: rest. Tue: 5–6 km easy + 4×100 m strides. Wed: 4–5 km easy. Thu: 4–5 km incl. 1–2 km at race pace + 4 strides. Fri: rest. Sat: 20–25 min very easy + 2–3 strides. Total weekly volume −60% vs peak. NO hills, NO intervals, NO long run, NO threshold.");
+    }
+
     if (phaseKey === "base") {
       rules.push("BASE PHASE RESTRICTION: Only easy runs (HR-based), strides from week 2+, and light hill work. NO threshold sessions, NO marathon pace, NO VO2max intervals. Aerobic foundation only — intensity added in Build phase.");
       rules.push("Early long runs (weeks 2–6): run last 3–5km slightly faster than easy pace — NOT marathon pace. Builds fatigue resistance without race-specificity stress.");
@@ -782,6 +902,11 @@ export function buildCoachingRules(raceDist, experience, easyHR, phase) {
 
   if (isMarathon && phaseKey === "taper") {
     rules.push("TAPER INTENSITY: NO VO2max intervals (no 5K-pace work) during taper weeks. Replace with short marathon pace blocks (3–6km total) and strides. Keep 1 quality MP-focused session per week. Stay sharp, not fatigued.");
+    rules.push("FINAL 14 DAYS: NO hill repeats — eccentric quad load too close to race day causes lingering DOMS. Replace any scheduled run_hills with easy run + 4–6 strides.");
+  }
+
+  if (isMarathon && (phaseKey === "build" || phaseKey === "peak" || phaseKey === "taper" || phaseKey === "recovery")) {
+    rules.push("Marathon-pace sessions (run_marathon_pace and MP segments inside long runs) MUST be prescribed at exactly the athlete's goal race pace. Use a tight band of ±3 sec/km — never a band that runs slower than race pace.");
   }
 
   rules.push(`Easy runs at HR ${easyHR || "below 145"} bpm, truly conversational`);
