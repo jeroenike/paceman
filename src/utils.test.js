@@ -11,7 +11,7 @@ import {
   secsToTime, parseDistanceFromMainSet, computePlanDeltas, computeRaceProjection,
   deriveThresholdPace, deriveLongRunPace, normalizeInjuries, injuriesToText,
   getTrainingPhase, getDistanceGuidance, buildCoachingRules, getAllCoachingRules,
-  getDaySessionType, getRotationLabel,
+  getDaySessionType, getRotationLabel, validateSchedule,
 } from "./utils.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1537,5 +1537,170 @@ describe("getRotationLabel", () => {
 
   it("returns null when rotations is null", () => {
     expect(getRotationLabel("Tue", 1, null)).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// validateSchedule — schedule compliance checker
+// ─────────────────────────────────────────────────────────────────────────────
+describe("validateSchedule", () => {
+  const marathon = 42.195;
+
+  // Ideal marathon schedule with full rotation
+  const goodSchedule = {
+    Mon:"rest", Tue:"run_threshold", Wed:"run_easy", Thu:"run_medium_long",
+    Fri:"rest", Sat:"run_easy", Sun:"run_long",
+  };
+  const goodRotations = {
+    Tue: ["run_interval","run_threshold","run_marathon_pace"],
+    Thu: ["run_medium_long","run_medium_long","run_medium_long"], // placeholder, length<2 so no rotation
+  };
+
+  it("returns an array", () => {
+    expect(Array.isArray(validateSchedule(goodSchedule, {}, marathon))).toBe(true);
+  });
+
+  it("every result has id, rule, status, message fields", () => {
+    const results = validateSchedule(goodSchedule, goodRotations, marathon);
+    results.forEach(r => {
+      expect(r).toHaveProperty("id");
+      expect(r).toHaveProperty("rule");
+      expect(r).toHaveProperty("status");
+      expect(r).toHaveProperty("message");
+    });
+  });
+
+  it("status values are only pass/fail/warn", () => {
+    const results = validateSchedule(goodSchedule, goodRotations, marathon);
+    results.forEach(r => expect(["pass","fail","warn"]).toContain(r.status));
+  });
+
+  // Long run
+  it("passes long_run_present when Sun is run_long", () => {
+    const r = validateSchedule(goodSchedule, {}, marathon).find(x => x.id === "long_run_present");
+    expect(r.status).toBe("pass");
+  });
+
+  it("fails long_run_present when no long run in schedule", () => {
+    const sched = { ...goodSchedule, Sun:"run_easy" };
+    const r = validateSchedule(sched, {}, marathon).find(x => x.id === "long_run_present");
+    expect(r.status).toBe("fail");
+    expect(r.fix).toBeTruthy();
+  });
+
+  // 80/20
+  it("passes 80/20 for ideal schedule (1 hard out of 5 runs)", () => {
+    const r = validateSchedule(goodSchedule, {}, marathon).find(x => x.id === "eighty_twenty");
+    expect(r.status).toBe("pass");
+  });
+
+  it("fails 80/20 when 3 out of 4 runs are hard (75%)", () => {
+    const sched = {
+      Mon:"rest", Tue:"run_threshold", Wed:"run_interval", Thu:"run_marathon_pace",
+      Fri:"rest", Sat:"run_easy", Sun:"run_long",
+    };
+    const r = validateSchedule(sched, {}, marathon).find(x => x.id === "eighty_twenty");
+    expect(r.status).toBe("fail");
+  });
+
+  // Back-to-back
+  it("passes no_back_to_back_hard for ideal schedule", () => {
+    const r = validateSchedule(goodSchedule, {}, marathon).find(x => x.id === "no_back_to_back_hard");
+    expect(r.status).toBe("pass");
+  });
+
+  it("fails no_back_to_back_hard when Tue+Wed are both hard", () => {
+    const sched = { ...goodSchedule, Wed:"run_interval" };
+    const r = validateSchedule(sched, {}, marathon).find(x => x.id === "no_back_to_back_hard");
+    expect(r.status).toBe("fail");
+    expect(r.message).toContain("Tue");
+    expect(r.message).toContain("Wed");
+  });
+
+  // CrossFit placement
+  it("passes crossfit_placement when Fri is rest", () => {
+    const r = validateSchedule(goodSchedule, {}, marathon).find(x => x.id === "crossfit_placement");
+    expect(r.status).toBe("pass");
+  });
+
+  it("fails crossfit_placement when Fri is crossfit", () => {
+    const sched = { ...goodSchedule, Fri:"crossfit" };
+    const r = validateSchedule(sched, {}, marathon).find(x => x.id === "crossfit_placement");
+    expect(r.status).toBe("fail");
+    expect(r.fix).toMatch(/Monday/i);
+  });
+
+  // Tuesday rotation (marathon-only)
+  it("fails tuesday_rotation when Tue is fixed with no rotation pool", () => {
+    const r = validateSchedule(goodSchedule, {}, marathon).find(x => x.id === "tuesday_rotation");
+    expect(r.status).toBe("fail");
+  });
+
+  it("passes tuesday_rotation with full 3-type rotation pool", () => {
+    const r = validateSchedule(goodSchedule, goodRotations, marathon).find(x => x.id === "tuesday_rotation");
+    expect(r.status).toBe("pass");
+  });
+
+  it("warns tuesday_rotation when rotation exists but is missing intervals", () => {
+    const partialRotations = { Tue: ["run_threshold","run_marathon_pace"] };
+    const r = validateSchedule(goodSchedule, partialRotations, marathon).find(x => x.id === "tuesday_rotation");
+    expect(r.status).toBe("warn");
+    expect(r.message).toMatch(/Intervals/i);
+  });
+
+  // Marathon-only rules not present for half marathon
+  it("does not include tuesday_rotation for half marathon", () => {
+    const r = validateSchedule(goodSchedule, goodRotations, 21.0975);
+    expect(r.find(x => x.id === "tuesday_rotation")).toBeUndefined();
+  });
+
+  it("does not include medium_long_present for half marathon", () => {
+    const r = validateSchedule(goodSchedule, goodRotations, 21.0975);
+    expect(r.find(x => x.id === "medium_long_present")).toBeUndefined();
+  });
+
+  // Medium-long run (marathon)
+  it("passes medium_long_present when Thu is run_medium_long", () => {
+    const r = validateSchedule(goodSchedule, {}, marathon).find(x => x.id === "medium_long_present");
+    expect(r.status).toBe("pass");
+  });
+
+  it("fails medium_long_present when no medium-long in schedule", () => {
+    const sched = { ...goodSchedule, Thu:"run_easy" };
+    const r = validateSchedule(sched, {}, marathon).find(x => x.id === "medium_long_present");
+    expect(r.status).toBe("fail");
+  });
+
+  // VO2max intervals
+  it("warns vo2max_intervals when intervals absent from schedule and rotations", () => {
+    const r = validateSchedule(goodSchedule, {}, marathon).find(x => x.id === "vo2max_intervals");
+    expect(r.status).toBe("warn");
+  });
+
+  it("passes vo2max_intervals when intervals are in a rotation pool", () => {
+    const r = validateSchedule(goodSchedule, goodRotations, marathon).find(x => x.id === "vo2max_intervals");
+    expect(r.status).toBe("pass");
+  });
+
+  // Marathon pace
+  it("warns marathon_pace_included when MP absent from schedule and rotations", () => {
+    const r = validateSchedule(goodSchedule, {}, marathon).find(x => x.id === "marathon_pace_included");
+    expect(r.status).toBe("warn");
+  });
+
+  it("passes marathon_pace_included when MP is in a rotation pool", () => {
+    const r = validateSchedule(goodSchedule, goodRotations, marathon).find(x => x.id === "marathon_pace_included");
+    expect(r.status).toBe("pass");
+  });
+
+  // Null / empty inputs
+  it("handles null schedule without crashing", () => {
+    expect(() => validateSchedule(null, null, marathon)).not.toThrow();
+  });
+
+  it("handles null raceDist — only non-marathon rules checked", () => {
+    const r = validateSchedule(goodSchedule, {}, null);
+    expect(r.find(x => x.id === "tuesday_rotation")).toBeUndefined();
+    expect(r.find(x => x.id === "long_run_present")).toBeDefined();
   });
 });
