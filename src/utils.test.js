@@ -1055,7 +1055,7 @@ describe("buildCoachingRules", () => {
     // Thursday structure
     it("requires structured Thursday medium-long run in Build phase", () => {
       const r = rules(42.195, "recreational", "130-145", buildPhase);
-      expect(r.some(s => s.toLowerCase().includes("thursday") && s.toLowerCase().includes("structure"))).toBe(true);
+      expect(r.some(s => s.toLowerCase().includes("thursday") && (s.includes("ROTATE") || s.toLowerCase().includes("structure") || s.toLowerCase().includes("stimulus")))).toBe(true);
     });
 
     it("Thursday rule explicitly rejects all-easy runs for performance goal", () => {
@@ -1211,6 +1211,143 @@ describe("buildCoachingRules", () => {
   it("always includes mainSet specificity rule", () => {
     const r = rules(42.195);
     expect(r.some(s => s.includes("mainSet"))).toBe(true);
+  });
+
+  // ── 7 new rules from MISSING_RULES ──────────────────────────────────────────
+
+  // effort_based_pacing
+  it("includes effort-based pacing rule for marathon (not pace-locked)", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    expect(r.some(s => s.toLowerCase().includes("effort-based") || s.toLowerCase().includes("pace-locked"))).toBe(true);
+  });
+
+  it("effort-based pacing rule mentions climb pace tolerance (10–30 sec/km)", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    const rule = r.find(s => s.toLowerCase().includes("pace-locked") || (s.toLowerCase().includes("effort-based") && s.toLowerCase().includes("climb")));
+    expect(rule).toBeDefined();
+    expect(rule).toMatch(/10.{1,5}30 sec/);
+  });
+
+  it("effort-based pacing rule is absent for non-marathon", () => {
+    const r = rules(21.0975, "recreational", "130-145", buildPhase);
+    expect(r.some(s => s.toLowerCase().includes("pace-locked"))).toBe(false);
+  });
+
+  // medium_long_rotation (Thursday rotation)
+  it("Thursday rotation includes all 3 stimulus options", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    const thuRule = r.find(s => s.toLowerCase().includes("thursday") && s.includes("ROTATE"));
+    expect(thuRule).toBeDefined();
+    expect(thuRule.toLowerCase()).toMatch(/steady finish|steady/);
+    expect(thuRule.toLowerCase()).toMatch(/rolling terrain/);
+    expect(thuRule.toLowerCase()).toMatch(/mp block|marathon pace/);
+  });
+
+  it("Thursday rotation rule specifies not repeating same structure two weeks running", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    const thuRule = r.find(s => s.toLowerCase().includes("thursday") && s.includes("ROTATE"));
+    expect(thuRule).toBeDefined();
+    expect(thuRule.toLowerCase()).toMatch(/never repeat|two week/i);
+  });
+
+  // fatigue_override
+  it("includes fatigue override rule for marathon", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    expect(r.some(s => s.toLowerCase().includes("fatigue override") || (s.toLowerCase().includes("fatigue") && s.toLowerCase().includes("downgrade")))).toBe(true);
+  });
+
+  it("fatigue override specifies HR threshold (5-8 bpm above baseline)", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    const rule = r.find(s => s.toLowerCase().includes("fatigue") && s.toLowerCase().includes("downgrade"));
+    expect(rule).toBeDefined();
+    expect(rule).toMatch(/5.{1,5}8 bpm/);
+  });
+
+  it("fatigue override protects the long run above all sessions", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    const rule = r.find(s => s.toLowerCase().includes("fatigue") && s.toLowerCase().includes("downgrade"));
+    expect(rule).toBeDefined();
+    expect(rule.toLowerCase()).toMatch(/long run|protect/);
+  });
+
+  it("fatigue override applies in Base phase too", () => {
+    const r = rules(42.195, "recreational", "130-145", basePhase);
+    expect(r.some(s => s.toLowerCase().includes("fatigue") && s.toLowerCase().includes("downgrade"))).toBe(true);
+  });
+
+  // long_run_variation
+  it("includes long run variation rule in Build phase", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    expect(r.some(s => s.toLowerCase().includes("long run") && s.includes("VARY"))).toBe(true);
+  });
+
+  it("long run variation includes broken MP blocks option (e.g. 3×4km)", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    const rule = r.find(s => s.toLowerCase().includes("long run") && s.includes("VARY"));
+    expect(rule).toBeDefined();
+    expect(rule.toLowerCase()).toMatch(/broken mp|3.{1,5}4km|broken/);
+  });
+
+  it("long run variation rule does NOT appear in Base phase", () => {
+    const r = rules(42.195, "recreational", "130-145", basePhase);
+    expect(r.some(s => s.toLowerCase().includes("long run") && s.includes("VARY"))).toBe(false);
+  });
+
+  // downhill_conditioning
+  it("includes downhill conditioning rule in Build phase", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    expect(r.some(s => s.toLowerCase().includes("downhill"))).toBe(true);
+  });
+
+  it("downhill rule mentions eccentric quad strength", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    const rule = r.find(s => s.toLowerCase().includes("downhill"));
+    expect(rule).toBeDefined();
+    expect(rule.toLowerCase()).toMatch(/eccentric|quad/);
+  });
+
+  it("downhill rule does NOT appear in Base phase", () => {
+    const r = rules(42.195, "recreational", "130-145", basePhase);
+    expect(r.some(s => s.toLowerCase().includes("downhill"))).toBe(false);
+  });
+
+  // race_simulation_requirement
+  it("includes race simulation rule in Peak phase", () => {
+    const peakPhase = { key: "peak" };
+    const r = rules(42.195, "recreational", "130-145", peakPhase);
+    expect(r.some(s => s.toLowerCase().includes("race simulation") || (s.toLowerCase().includes("simulation") && s.toLowerCase().includes("marathon pace")))).toBe(true);
+  });
+
+  it("race simulation requires ≥10km at MP within final 12km", () => {
+    const peakPhase = { key: "peak" };
+    const r = rules(42.195, "recreational", "130-145", peakPhase);
+    const rule = r.find(s => s.toLowerCase().includes("simulation"));
+    expect(rule).toBeDefined();
+    expect(rule).toMatch(/10km|≥10/);
+    expect(rule).toMatch(/12km|final 12/);
+  });
+
+  it("race simulation does NOT appear in Build phase", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    expect(r.some(s => s.toLowerCase().includes("race simulation"))).toBe(false);
+  });
+
+  // no_race_training
+  it("includes no-racing-in-training rule for marathon", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    expect(r.some(s => s.toLowerCase().includes("no racing") || (s.toLowerCase().includes("controlled") && s.toLowerCase().includes("force pace")))).toBe(true);
+  });
+
+  it("no-race-training rule covers the 'reduce volume not force pace' instruction", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    const rule = r.find(s => s.toLowerCase().includes("force pace"));
+    expect(rule).toBeDefined();
+    expect(rule.toLowerCase()).toMatch(/reduce volume|do not force/i);
+  });
+
+  it("no-race-training rule applies in Base phase", () => {
+    const r = rules(42.195, "recreational", "130-145", basePhase);
+    expect(r.some(s => s.toLowerCase().includes("force pace"))).toBe(true);
   });
 });
 
