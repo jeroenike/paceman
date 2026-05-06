@@ -516,8 +516,10 @@ export function buildCoachingRules(raceDist, experience, easyHR, phase) {
     if (phaseKey === "build" || phaseKey === "peak") {
       rules.push("Progression long runs: from week 5 onward, run the final 5–12km at marathon race pace to build race specificity");
       rules.push("Tuesday intensity MUST ROTATE every 3 weeks — VO2max intervals (5–6×1km at 5K effort) → Threshold (8–10km at threshold pace) → Marathon pace (10km at race pace). Never threshold every single Tuesday");
-      rules.push("Thursday medium-long run must include structure: final 4–5km at steady pace (15–20s/km faster than easy), or run on rolling terrain, or 5km mid-run at marathon pace. All-easy Thursday runs are wasted miles for a performance goal");
+      rules.push("Thursday medium-long stimulus must ROTATE weekly: Week A = steady finish (last 4–5km at 15–20s/km faster than easy), Week B = rolling terrain effort-based, Week C = mid-run MP block (5–8km at race pace). Never repeat the same structure two weeks running. All-easy Thursday runs are wasted miles for a performance goal");
       rules.push("Long run MP segments must progress each non-recovery week: 6–8km MP in early Build → 10km MP in mid-Build → 12–14km MP in late Build/Peak");
+      rules.push("Long run stimulus must VARY week-to-week: rotate between progression finish (last 5–8km faster), rolling terrain in the final third, and broken MP blocks (e.g. 3×4km at race pace with 2min easy). Never repeat the same long run structure two consecutive weeks");
+      rules.push("Downhill conditioning: include controlled downhill running at least every 2 weeks. Cue: relaxed upper body, quick turnover, avoid braking. Builds eccentric quad strength for late-race durability");
       rules.push("Include 1 hill session every 2 weeks: replace Wednesday easy run with 6–8×90s hard uphill efforts (jog down recovery). Critical for hilly marathon courses");
     }
   } else {
@@ -526,6 +528,7 @@ export function buildCoachingRules(raceDist, experience, easyHR, phase) {
 
   if (isMarathon && phaseKey === "peak") {
     rules.push("Peak long run must reach 30–32km for recreational/competitive athletes. A 24km peak long run prepares for completion only, not performance");
+    rules.push("Race simulation: at least 2 long runs this phase must include ≥10km at marathon pace within the final 12km, on rolling terrain. This bridges training to race execution");
   }
 
   rules.push("80/20 rule: at least 80% of weekly volume must be easy effort. Hard volume (threshold + intervals + marathon pace combined) must not exceed 20% of total weekly km");
@@ -535,6 +538,9 @@ export function buildCoachingRules(raceDist, experience, easyHR, phase) {
 
   if (isMarathon) {
     rules.push("run_marathon_pace = sustained goal race pace: 12–18km total. Use in Build/Peak phase");
+    rules.push("Effort-based pacing: MP and steady efforts must NOT be pace-locked. Allow 10–30 sec/km pace drop on climbs without forcing correction. Prevents overexertion on rolling courses");
+    rules.push("No racing in training: MP and long runs must finish controlled. If athlete cannot sustain MP → reduce volume, do NOT force pace. Overreaching causes inconsistency and injury");
+    rules.push("Fatigue override: if HR is 5–8 bpm above baseline OR legs feel heavy → downgrade the session to easy effort. Protect the long run above all other sessions");
     rules.push("Cross-training (crossfit days): low-impact only — cycling, swimming, elliptical. No high-intensity CrossFit during marathon training");
     rules.push("CrossFit on Monday only — never Friday. Friday CrossFit creates compounded fatigue into the long run weekend. Peak weeks: max 1 CrossFit session, no heavy lower-body work (squats, deadlifts, box jumps)");
   }
