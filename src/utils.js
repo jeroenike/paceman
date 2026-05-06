@@ -498,9 +498,17 @@ export function buildCoachingRules(raceDist, experience, easyHR, phase) {
     rules.push("Long run progresses independently as the primary adaptation driver — percentage cap does not apply for marathon");
     if (phaseKey === "build" || phaseKey === "peak") {
       rules.push("Progression long runs: from week 5 onward, run the final 5–12km at marathon race pace to build race specificity");
+      rules.push("Tuesday intensity MUST ROTATE every 3 weeks — VO2max intervals (5–6×1km at 5K effort) → Threshold (8–10km at threshold pace) → Marathon pace (10km at race pace). Never threshold every single Tuesday");
+      rules.push("Thursday medium-long run must include structure: final 4–5km at steady pace (15–20s/km faster than easy), or run on rolling terrain, or 5km mid-run at marathon pace. All-easy Thursday runs are wasted miles for a performance goal");
+      rules.push("Long run MP segments must progress each non-recovery week: 6–8km MP in early Build → 10km MP in mid-Build → 12–14km MP in late Build/Peak");
+      rules.push("Include 1 hill session every 2 weeks: replace Wednesday easy run with 6–8×90s hard uphill efforts (jog down recovery). Critical for hilly marathon courses");
     }
   } else {
     rules.push("Long run = 30–40% of weekly volume");
+  }
+
+  if (isMarathon && phaseKey === "peak") {
+    rules.push("Peak long run must reach 30–32km for recreational/competitive athletes. A 24km peak long run prepares for completion only, not performance");
   }
 
   rules.push("80/20 rule: at least 80% of weekly volume must be easy effort. Hard volume (threshold + intervals + marathon pace combined) must not exceed 20% of total weekly km");
@@ -511,6 +519,11 @@ export function buildCoachingRules(raceDist, experience, easyHR, phase) {
   if (isMarathon) {
     rules.push("run_marathon_pace = sustained goal race pace: 12–18km total. Use in Build/Peak phase");
     rules.push("Cross-training (crossfit days): low-impact only — cycling, swimming, elliptical. No high-intensity CrossFit during marathon training");
+    rules.push("CrossFit on Monday only — never Friday. Friday CrossFit creates compounded fatigue into the long run weekend. Peak weeks: max 1 CrossFit session, no heavy lower-body work (squats, deadlifts, box jumps)");
+  }
+
+  if (isMarathon && (phaseKey === "build" || phaseKey === "peak" || phaseKey === "taper")) {
+    rules.push("Long runs ≥18km must include fueling practice: gel at 45 min, every 25–30 min after. Nutrition execution on race day is a skill that must be trained");
   }
 
   rules.push(`Easy runs at HR ${easyHR || "below 145"} bpm, truly conversational`);
