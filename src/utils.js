@@ -522,6 +522,176 @@ export function getDistanceGuidance(raceDist, experience) {
  * the phase keys in which each rule is active.
  * Used to show the user which rules are applied now vs. coming in future phases.
  */
+// ── Schedule validator ────────────────────────────────────────────────────────
+
+const HARD_SESSION_TYPES = ["run_threshold", "run_interval", "run_marathon_pace"];
+const RUN_SESSION_TYPES  = ["run_threshold", "run_interval", "run_marathon_pace", "run_easy", "run_long", "run_medium_long"];
+
+/**
+ * Validates a profile's schedule and rotation pool against critical coaching
+ * rules. Returns an array of { id, rule, status, message, fix } objects —
+ * one entry per rule regardless of pass/fail, so the user sees the full picture.
+ * status: "pass" | "fail" | "warn"
+ */
+export function validateSchedule(schedule, scheduleRotations, raceDist) {
+  const sched = schedule || {};
+  const rotations = scheduleRotations || {};
+  const isMarathon = raceDist != null && raceDist >= 42;
+  const results = [];
+
+  // Helper: all type values across schedule and every rotation pool
+  const allConfiguredTypes = [
+    ...DAY_LABELS.map(d => sched[d]).filter(Boolean),
+    ...Object.values(rotations).flat(),
+  ];
+
+  // ── 1. Long run present ──────────────────────────────────────────────────
+  const hasLongRun = DAY_LABELS.some(d => sched[d] === "run_long");
+  results.push({
+    id: "long_run_present",
+    rule: "Long run in schedule",
+    status: hasLongRun ? "pass" : "fail",
+    message: hasLongRun
+      ? "Long run is scheduled"
+      : "No long run found in weekly schedule",
+    fix: hasLongRun ? null : "Set one day (typically Sunday) to Long Run",
+  });
+
+  // ── 2. 80/20 hard/easy balance ───────────────────────────────────────────
+  const hardDays = DAY_LABELS.filter(d => HARD_SESSION_TYPES.includes(sched[d]));
+  const runDays  = DAY_LABELS.filter(d => RUN_SESSION_TYPES.includes(sched[d]));
+  const hardPct  = runDays.length > 0 ? hardDays.length / runDays.length : 0;
+  const hardPctLabel = `${Math.round(hardPct * 100)}%`;
+  results.push({
+    id: "eighty_twenty",
+    rule: "80/20 hard/easy balance",
+    status: hardPct <= 0.2 ? "pass" : "fail",
+    message: hardPct <= 0.2
+      ? `${hardDays.length} hard / ${runDays.length} runs (${hardPctLabel}) — within the 20% cap`
+      : `${hardDays.length} hard / ${runDays.length} runs (${hardPctLabel}) — exceeds 20% hard cap`,
+    fix: hardPct > 0.2
+      ? `Convert ${hardDays.length - Math.floor(runDays.length * 0.2)} session(s) to Easy Run or rest`
+      : null,
+  });
+
+  // ── 3. No back-to-back hard sessions ────────────────────────────────────
+  const backToBack = [];
+  for (let i = 0; i < DAY_LABELS.length - 1; i++) {
+    const d1 = DAY_LABELS[i], d2 = DAY_LABELS[i + 1];
+    if (HARD_SESSION_TYPES.includes(sched[d1]) && HARD_SESSION_TYPES.includes(sched[d2])) {
+      backToBack.push(`${d1}+${d2}`);
+    }
+  }
+  results.push({
+    id: "no_back_to_back_hard",
+    rule: "No consecutive hard sessions",
+    status: backToBack.length === 0 ? "pass" : "fail",
+    message: backToBack.length === 0
+      ? "No consecutive hard session days"
+      : `Consecutive hard days: ${backToBack.join(", ")}`,
+    fix: backToBack.length > 0
+      ? `Insert an Easy Run or Rest day between ${backToBack[0].replace("+", " and ")}`
+      : null,
+  });
+
+  // ── 4. CrossFit not on Friday ─────────────────────────────────────────────
+  const friIsCrossfit = sched["Fri"] === "crossfit";
+  results.push({
+    id: "crossfit_placement",
+    rule: "CrossFit not on Friday",
+    status: friIsCrossfit ? "fail" : "pass",
+    message: friIsCrossfit
+      ? "CrossFit is on Friday — adds fatigue directly before the long run weekend"
+      : "CrossFit is not scheduled on Friday",
+    fix: friIsCrossfit ? "Move Friday to Rest or Easy Run. Put CrossFit on Monday instead" : null,
+  });
+
+  if (isMarathon) {
+    // ── 5. Tuesday rotation pool ───────────────────────────────────────────
+    const tueRotation = rotations["Tue"] || [];
+    const hasIntervals = tueRotation.includes("run_interval");
+    const hasThreshold = tueRotation.includes("run_threshold") || sched["Tue"] === "run_threshold";
+    const hasMP        = tueRotation.includes("run_marathon_pace");
+    const tueRotates   = tueRotation.length >= 2;
+
+    let tueStatus, tueMessage, tueFix;
+    if (!tueRotates) {
+      tueStatus  = "fail";
+      tueMessage = `Tuesday is fixed as ${SESSION_LABELS[sched["Tue"]] || "one type"} every week — no rotation`;
+      tueFix     = "Add a rotation pool on Tuesday: Intervals → Threshold → Marathon Pace";
+    } else if (!hasIntervals || !hasThreshold || !hasMP) {
+      const missing = [
+        !hasIntervals && "Intervals",
+        !hasThreshold && "Threshold",
+        !hasMP        && "Marathon Pace",
+      ].filter(Boolean);
+      tueStatus  = "warn";
+      tueMessage = `Tuesday rotates but is missing: ${missing.join(", ")}`;
+      tueFix     = `Add ${missing.join(", ")} to Tuesday's rotation pool`;
+    } else {
+      tueStatus  = "pass";
+      tueMessage = "Tuesday rotates through Intervals → Threshold → Marathon Pace";
+      tueFix     = null;
+    }
+    results.push({ id: "tuesday_rotation", rule: "Tuesday intensity rotation", status: tueStatus, message: tueMessage, fix: tueFix });
+
+    // ── 6. VO2max intervals somewhere in schedule/rotations ───────────────
+    const hasIntervalAnywhere = allConfiguredTypes.includes("run_interval");
+    results.push({
+      id: "vo2max_intervals",
+      rule: "VO2max intervals included",
+      status: hasIntervalAnywhere ? "pass" : "warn",
+      message: hasIntervalAnywhere
+        ? "Interval sessions are included in the schedule or a rotation pool"
+        : "No interval sessions (VO2max work) anywhere in schedule or rotation pools",
+      fix: hasIntervalAnywhere ? null : "Add run_interval to Tuesday's rotation pool",
+    });
+
+    // ── 7. Medium-long run present ─────────────────────────────────────────
+    const hasMediumLong = DAY_LABELS.some(d => sched[d] === "run_medium_long");
+    results.push({
+      id: "medium_long_present",
+      rule: "Medium-long run in schedule",
+      status: hasMediumLong ? "pass" : "fail",
+      message: hasMediumLong
+        ? "Medium-long run is scheduled (typically Thursday)"
+        : "No medium-long run in schedule — critical for marathon aerobic base",
+      fix: hasMediumLong ? null : "Set Thursday to Medium Long Run",
+    });
+
+    // ── 8. Thursday rotation (if it's medium-long) ────────────────────────
+    const thuIsMediumLong = sched["Thu"] === "run_medium_long";
+    const thuRotation     = rotations["Thu"] || [];
+    if (thuIsMediumLong) {
+      results.push({
+        id: "thursday_rotation",
+        rule: "Thursday medium-long rotation",
+        status: thuRotation.length >= 2 ? "pass" : "warn",
+        message: thuRotation.length >= 2
+          ? "Thursday medium-long run has a rotation pool"
+          : "Thursday medium-long has no rotation — same stimulus every week",
+        fix: thuRotation.length < 2
+          ? "Add rotation on Thursday: e.g. steady finish, rolling terrain, mid-run MP block"
+          : null,
+      });
+    }
+
+    // ── 9. Marathon pace included ─────────────────────────────────────────
+    const hasMPAnywhere = allConfiguredTypes.includes("run_marathon_pace");
+    results.push({
+      id: "marathon_pace_included",
+      rule: "Marathon pace sessions included",
+      status: hasMPAnywhere ? "pass" : "warn",
+      message: hasMPAnywhere
+        ? "Marathon pace sessions are included in the schedule or a rotation pool"
+        : "No marathon pace sessions anywhere in schedule or rotation pools",
+      fix: hasMPAnywhere ? null : "Add run_marathon_pace to Tuesday's rotation pool",
+    });
+  }
+
+  return results;
+}
+
 export function getAllCoachingRules(raceDist, experience, easyHR) {
   const phaseKeys = ["base", "build", "peak", "taper"];
   const rulePhases = new Map();

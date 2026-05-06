@@ -4,7 +4,7 @@ import { loadUserData, saveUserData } from "./db.js";
 import {
   DAY_LABELS, SESSION_TYPES, SESSION_COLORS, SESSION_LABELS, RACE_DISTANCES,
   MARATHON_DEFAULT_SCHEDULE, getTrainingPhase, getDistanceGuidance, buildCoachingRules, getAllCoachingRules,
-  getDaySessionType, getRotationLabel,
+  getDaySessionType, getRotationLabel, validateSchedule,
   parsePace, secsTopace, computeRacePace, computeGoalTime, computeTrainingPaces,
   getWeekStart, getCurrentWeekStart, getPlannedDay, getAutoLink,
   getWeeksToRace, findLinkedSession, findLinkedSessions, sessionsForWeek, sessionInWeek,
@@ -724,75 +724,27 @@ ${weeksHTML}
 
 // ── Coaching Rules Modal ──
 
-const PHASE_NAMES = { base:"Base", build:"Build", peak:"Peak", taper:"Taper" };
-
-function CoachingRulesModal({ profile, currentPhase, onClose }) {
+function CoachingRulesModal({ profile, onClose }) {
   const raceDist = RACE_DISTANCES[profile.goal] || (profile.goal === "Custom..." ? parseFloat(profile.goalCustomDist) : null);
   const allRules = getAllCoachingRules(raceDist, profile.experience, profile.easyHR);
-  const currentKey = currentPhase?.key;
-
-  const activeRules = allRules.filter(r => !currentKey || r.phases.includes(currentKey));
-  const unavailableRules = allRules.filter(r => currentKey && !r.phases.includes(currentKey));
 
   return (
     <div onClick={onClose} style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:200,display:"flex",flexDirection:"column",justifyContent:"flex-end" }}>
       <div onClick={e=>e.stopPropagation()} style={{ background:"#fff",borderRadius:"16px 16px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",boxShadow:"0 -4px 24px rgba(0,0,0,0.15)" }}>
-        {/* Header */}
         <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"16px 16px 12px",borderBottom:"1px solid #f0f0ec",flexShrink:0 }}>
-          <div>
-            <div style={{ fontSize:15,fontWeight:800,color:"#1a1a1a" }}>Coaching Rules</div>
-            <div style={{ fontSize:12,color:"#aaa",marginTop:2 }}>
-              {currentKey ? `Applied to your schedule · ${PHASE_NAMES[currentKey] || currentKey} phase` : "Applied to your schedule"}
-            </div>
-          </div>
+          <div style={{ fontSize:15,fontWeight:800,color:"#1a1a1a" }}>Coaching Rules</div>
           <button onClick={onClose} style={{ fontSize:20,lineHeight:1,background:"none",border:"none",color:"#aaa",cursor:"pointer",padding:"4px 8px" }}>✕</button>
         </div>
-
         <div style={{ overflowY:"auto",padding:"12px 16px 24px",flex:1 }}>
-          {!raceDist && (
+          {!raceDist ? (
             <div style={{ fontSize:13,color:"#aaa",padding:"16px 0",textAlign:"center" }}>
               Set a race goal in your profile to see coaching rules.
             </div>
-          )}
-
-          {raceDist && activeRules.length > 0 && (
-            <>
-              {currentKey && (
-                <div style={{ fontSize:11,fontWeight:700,color:"#0F6E56",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8 }}>
-                  Active now — {PHASE_NAMES[currentKey] || currentKey} phase
-                </div>
-              )}
-              {activeRules.map(({ rule, phases }, i) => (
-                <div key={i} style={{ display:"flex",gap:10,padding:"9px 0",borderBottom:"1px solid #f5f5f3" }}>
-                  <span style={{ color:"#0F6E56",fontSize:14,flexShrink:0,marginTop:1 }}>✓</span>
-                  <span style={{ fontSize:13,color:"#1a1a1a",lineHeight:1.5 }}>{rule}</span>
-                </div>
-              ))}
-            </>
-          )}
-
-          {raceDist && unavailableRules.length > 0 && (
-            <>
-              <div style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",marginTop:20,marginBottom:8 }}>
-                Not active in current phase
-              </div>
-              {unavailableRules.map(({ rule, phases }, i) => (
-                <div key={i} style={{ display:"flex",gap:10,padding:"9px 0",borderBottom:"1px solid #f5f5f3",opacity:0.55 }}>
-                  <span style={{ fontSize:14,flexShrink:0,marginTop:1,color:"#aaa" }}>○</span>
-                  <div style={{ flex:1 }}>
-                    <span style={{ fontSize:13,color:"#555",lineHeight:1.5 }}>{rule}</span>
-                    <div style={{ marginTop:4,display:"flex",gap:4,flexWrap:"wrap" }}>
-                      {phases.map(p => (
-                        <span key={p} style={{ fontSize:10,fontWeight:700,color:"#888",background:"#f0f0ec",borderRadius:4,padding:"1px 6px",textTransform:"capitalize" }}>
-                          {PHASE_NAMES[p] || p}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </>
-          )}
+          ) : allRules.map(({ rule }, i) => (
+            <div key={i} style={{ display:"flex",gap:10,padding:"9px 0",borderBottom:"1px solid #f5f5f3" }}>
+              <span style={{ fontSize:13,color:"#1a1a1a",lineHeight:1.5 }}>{rule}</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -1084,7 +1036,6 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
       {showRulesModal && (
         <CoachingRulesModal
           profile={store.profile}
-          currentPhase={trainingPhase}
           onClose={()=>setShowRulesModal(false)}
         />
       )}
@@ -2390,6 +2341,45 @@ function ProfileScreen({ store, persist, onSaved, isDevMode, onSignOut }) {
             );
           })}
         </div>
+        {/* Schedule Health */}
+        {(()=>{
+          const raceDist = RACE_DISTANCES[draft.goal] || (draft.goal==="Custom..."&&draft.goalCustomDist?parseFloat(draft.goalCustomDist):null);
+          const checks = validateSchedule(draft.schedule, draft.scheduleRotations, raceDist);
+          const fails  = checks.filter(c=>c.status==="fail");
+          const warns  = checks.filter(c=>c.status==="warn");
+          const passes = checks.filter(c=>c.status==="pass");
+          return (
+            <div style={{ marginTop:4,marginBottom:4 }}>
+              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8 }}>
+                <span style={{ fontSize:11,color:"#888",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.07em" }}>Schedule Health</span>
+                <span style={{ fontSize:11,fontWeight:700,
+                  color:fails.length>0?"#c00":warns.length>0?"#b07000":"#0F6E56" }}>
+                  {fails.length>0?`${fails.length} issue${fails.length>1?"s":""}`:warns.length>0?`${warns.length} warning${warns.length>1?"s":""}`:passes.length>0?"All good":"—"}
+                </span>
+              </div>
+              <div style={{ borderRadius:8,overflow:"hidden",border:"1px solid #eee" }}>
+                {checks.map((c,i)=>{
+                  const icon  = c.status==="pass"?"✓":c.status==="fail"?"✗":"!";
+                  const color = c.status==="pass"?"#0F6E56":c.status==="fail"?"#c00":"#b07000";
+                  const bg    = c.status==="pass"?"#f5fdf8":c.status==="fail"?"#fff5f5":"#fffbf0";
+                  return (
+                    <div key={c.id} style={{ background:bg,padding:"8px 12px",borderBottom:i<checks.length-1?"1px solid #f0f0ec":"none" }}>
+                      <div style={{ display:"flex",gap:8,alignItems:"flex-start" }}>
+                        <span style={{ fontSize:12,fontWeight:800,color,flexShrink:0,marginTop:1,width:12,textAlign:"center" }}>{icon}</span>
+                        <div style={{ flex:1 }}>
+                          <div style={{ fontSize:12,fontWeight:700,color:"#1a1a1a",marginBottom:c.fix?2:0 }}>{c.rule}</div>
+                          <div style={{ fontSize:11,color:color=="#0F6E56"?"#666":color }}>{c.message}</div>
+                          {c.fix&&<div style={{ fontSize:11,color:"#555",marginTop:3,fontStyle:"italic" }}>→ {c.fix}</div>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
         <button onClick={()=>{
           const toSave = {...draft};
           if (!racePaceOverride && autoRacePace) toSave.racePace = autoRacePace;
