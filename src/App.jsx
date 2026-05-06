@@ -585,7 +585,7 @@ function buildPrintHTML(profile, weekPlans) {
       return `<tr class="dr${isRest ? " rest" : ""}">
         <td class="dl"><b>${day}</b><span>${dateStr}</span></td>
         <td class="dtp"><span class="tb" style="color:${color};border-color:${color}">${label}</span></td>
-        <td class="dm">${
+        <td class="dm" contenteditable="true">${
           bullets.length > 1
             ? `<ul>${bullets.map(b => `<li>${b}</li>`).join("")}</ul>`
             : mainSet ? mainSet : `<span class="nil">Rest day</span>`
@@ -624,6 +624,19 @@ function buildPrintHTML(profile, weekPlans) {
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;font-size:8pt;color:#1a1a1a;line-height:1.4;background:#fff}
 
+/* Toolbar — hidden on print */
+.toolbar{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;gap:10px;padding:10px 16px;background:#1a1a1a;color:#fff;font-family:inherit;font-size:13px}
+.toolbar .tl{font-weight:700;flex:1}
+.toolbar .tip{font-size:11px;color:#aaa;flex:1}
+.tbtn{padding:7px 18px;border-radius:6px;border:none;font-size:13px;font-weight:700;cursor:pointer}
+.tbtn-print{background:#1B6FE8;color:#fff}
+.tbtn-close{background:#333;color:#ccc}
+.toolbar .edit-tip{font-size:11px;color:#7ab4ff;margin-left:8px}
+
+/* Push content below toolbar in screen view */
+@media screen{body{padding-top:48px}.content{padding:16px 20px}}
+@media print{.toolbar{display:none}.content{padding:0}}
+
 /* Header */
 .ph{display:flex;justify-content:space-between;align-items:flex-end;padding-bottom:9pt;margin-bottom:12pt;border-bottom:2pt solid #1B6FE8}
 .ph h1{font-size:15pt;font-weight:800;margin-bottom:3pt}
@@ -659,16 +672,26 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-se
 .dtp{width:62pt;padding:4pt 5pt;vertical-align:top}
 .tb{font-size:7pt;font-weight:600;padding:1.5pt 5pt;border-radius:8pt;border:0.75pt solid;display:inline-block;white-space:nowrap}
 
-/* Main set */
-.dm{padding:4pt 8pt 4pt 4pt;vertical-align:top;font-size:7.5pt;color:#333;line-height:1.45}
+/* Main set — editable */
+.dm{padding:4pt 8pt 4pt 4pt;vertical-align:top;font-size:7.5pt;color:#333;line-height:1.45;min-width:0}
 .dm ul{padding-left:9pt;margin:0}
 .dm li{margin-bottom:1pt}
 .nil{color:#ccc}
+[contenteditable]{outline:none;border-radius:2px}
+[contenteditable]:focus{background:#fffbe6;outline:1pt dashed #f0c020}
+@media print{[contenteditable]:focus{background:none;outline:none}}
 
 @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 </style>
 </head>
 <body>
+<div class="toolbar">
+  <span class="tl">${profile.name ? profile.name + "'s" : "Training"} Schedule</span>
+  <span class="tip">Click any session text to edit notes before printing.</span>
+  <button class="tbtn tbtn-print" onclick="window.print()">Print / Save as PDF</button>
+  <button class="tbtn tbtn-close" onclick="window.close()">Close</button>
+</div>
+<div class="content">
 <div class="ph">
   <div>
     <h1>${profile.name ? `${profile.name}'s Training Schedule` : "Training Schedule"}</h1>
@@ -682,6 +705,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-se
   </div>
 </div>
 ${weeksHTML}
+</div>
 </body>
 </html>`;
 }
