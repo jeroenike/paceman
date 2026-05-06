@@ -2414,8 +2414,8 @@ function ProfileScreen({ store, persist, onSaved, isDevMode, onSignOut, onGenera
                   </span>
                 </div>
               )}
-              <button onClick={onGenerateAllPlans} disabled={loading}
-                style={{ padding:14,borderRadius:10,background:loading?"#ccc":"#0F6E56",color:"white",border:"none",fontSize:15,fontWeight:700,cursor:loading?"default":"pointer" }}>
+              <button onClick={onGenerateAllPlans} disabled={loading||unsavedChanges}
+                style={{ padding:14,borderRadius:10,background:(loading||unsavedChanges)?"#ccc":"#0F6E56",color:"white",border:"none",fontSize:15,fontWeight:700,cursor:(loading||unsavedChanges)?"default":"pointer" }}>
                 {loadingMsg||(hasPlans?"Regenerate Full Plan to Race Day":"Generate Full Plan to Race Day")}
               </button>
             </div>
