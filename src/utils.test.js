@@ -11,6 +11,7 @@ import {
   secsToTime, parseDistanceFromMainSet, computePlanDeltas, computeRaceProjection,
   deriveThresholdPace, deriveLongRunPace, normalizeInjuries, injuriesToText,
   getTrainingPhase, getDistanceGuidance, buildCoachingRules, getAllCoachingRules,
+  getDaySessionType, getRotationLabel,
 } from "./utils.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1436,5 +1437,105 @@ describe("getAllCoachingRules", () => {
   it("returns empty-ish list when raceDist is null", () => {
     const all = getAllCoachingRules(null, "recreational", "130-145");
     expect(Array.isArray(all)).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getDaySessionType — rotation-aware session type resolver
+// ─────────────────────────────────────────────────────────────────────────────
+describe("getDaySessionType", () => {
+  const schedule = { Tue: "run_threshold", Thu: "run_medium_long", Sun: "run_long" };
+  const rotations = { Tue: ["run_interval", "run_threshold", "run_marathon_pace"] };
+
+  it("returns fixed schedule type when no rotation defined for day", () => {
+    expect(getDaySessionType("Thu", 1, schedule, rotations)).toBe("run_medium_long");
+  });
+
+  it("returns fixed schedule type when rotation pool has only 1 item", () => {
+    expect(getDaySessionType("Tue", 1, schedule, { Tue: ["run_threshold"] })).toBe("run_threshold");
+  });
+
+  it("returns first rotation type on week 1", () => {
+    expect(getDaySessionType("Tue", 1, schedule, rotations)).toBe("run_interval");
+  });
+
+  it("returns second rotation type on week 2", () => {
+    expect(getDaySessionType("Tue", 2, schedule, rotations)).toBe("run_threshold");
+  });
+
+  it("returns third rotation type on week 3", () => {
+    expect(getDaySessionType("Tue", 3, schedule, rotations)).toBe("run_marathon_pace");
+  });
+
+  it("wraps back to first on week 4 (modulo)", () => {
+    expect(getDaySessionType("Tue", 4, schedule, rotations)).toBe("run_interval");
+  });
+
+  it("handles weekNumber=0 without crash, returns first item", () => {
+    expect(getDaySessionType("Tue", 0, schedule, rotations)).toBe("run_interval");
+  });
+
+  it("returns 'rest' fallback when day not in schedule and no rotation", () => {
+    expect(getDaySessionType("Fri", 1, {}, {})).toBe("rest");
+  });
+
+  it("returns 'rest' when schedule and rotations are null/undefined", () => {
+    expect(getDaySessionType("Tue", 1, null, null)).toBe("rest");
+  });
+
+  it("a 2-type rotation alternates correctly across 4 weeks", () => {
+    const r = { Tue: ["run_interval", "run_threshold"] };
+    expect(getDaySessionType("Tue", 1, schedule, r)).toBe("run_interval");
+    expect(getDaySessionType("Tue", 2, schedule, r)).toBe("run_threshold");
+    expect(getDaySessionType("Tue", 3, schedule, r)).toBe("run_interval");
+    expect(getDaySessionType("Tue", 4, schedule, r)).toBe("run_threshold");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getRotationLabel — human-readable rotation description for AI prompt
+// ─────────────────────────────────────────────────────────────────────────────
+describe("getRotationLabel", () => {
+  const rotations = { Tue: ["run_interval", "run_threshold", "run_marathon_pace"] };
+
+  it("returns null when no rotation defined for day", () => {
+    expect(getRotationLabel("Thu", 1, {})).toBeNull();
+  });
+
+  it("returns null when rotation pool has fewer than 2 items", () => {
+    expect(getRotationLabel("Tue", 1, { Tue: ["run_threshold"] })).toBeNull();
+  });
+
+  it("returns a string for a valid rotation", () => {
+    expect(typeof getRotationLabel("Tue", 1, rotations)).toBe("string");
+  });
+
+  it("includes the active session label for week 1 (Intervals)", () => {
+    const label = getRotationLabel("Tue", 1, rotations);
+    expect(label).toMatch(/Intervals/i);
+  });
+
+  it("includes the active session label for week 2 (Threshold)", () => {
+    const label = getRotationLabel("Tue", 2, rotations);
+    expect(label).toMatch(/Threshold/i);
+  });
+
+  it("includes rotation position (rotation 1 of 3)", () => {
+    expect(getRotationLabel("Tue", 1, rotations)).toContain("rotation 1 of 3");
+  });
+
+  it("includes all type labels in the sequence description", () => {
+    const label = getRotationLabel("Tue", 1, rotations);
+    expect(label).toMatch(/Intervals/i);
+    expect(label).toMatch(/Threshold/i);
+    expect(label).toMatch(/Marathon Pace/i);
+  });
+
+  it("wraps correctly on week 4 → shows rotation 1 of 3", () => {
+    expect(getRotationLabel("Tue", 4, rotations)).toContain("rotation 1 of 3");
+  });
+
+  it("returns null when rotations is null", () => {
+    expect(getRotationLabel("Tue", 1, null)).toBeNull();
   });
 });

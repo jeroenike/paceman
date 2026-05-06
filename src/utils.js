@@ -438,6 +438,36 @@ export function computeRaceProjection(sessions, profile) {
   };
 }
 
+// ── Schedule rotation helpers ─────────────────────────────────────────────────
+
+/**
+ * Resolve the session type for a given day and week number, accounting for
+ * rotation pools. When a day has a rotation pool (≥2 types), cycles through
+ * them in order: week 1 → index 0, week 2 → index 1, etc.
+ * Falls back to the fixed schedule type when no rotation is defined.
+ */
+export function getDaySessionType(day, weekNumber, schedule, scheduleRotations) {
+  const rotation = scheduleRotations?.[day];
+  if (rotation && rotation.length >= 2) {
+    const idx = weekNumber > 0 ? (weekNumber - 1) % rotation.length : 0;
+    return rotation[idx];
+  }
+  return schedule?.[day] || "rest";
+}
+
+/**
+ * Returns a human-readable rotation label for the AI prompt, e.g.:
+ * "Threshold (rotation 2 of 3: Intervals → Threshold → Marathon Pace)"
+ * Returns null if the day has no rotation.
+ */
+export function getRotationLabel(day, weekNumber, scheduleRotations) {
+  const rotation = scheduleRotations?.[day];
+  if (!rotation || rotation.length < 2) return null;
+  const idx = weekNumber > 0 ? (weekNumber - 1) % rotation.length : 0;
+  const labels = rotation.map(t => SESSION_LABELS[t] || t);
+  return `${labels[idx]} (rotation ${idx + 1} of ${rotation.length}: ${labels.join(" → ")})`;
+}
+
 // ── Training periodization ─────────────────────────────────────────────────────
 
 export function getTrainingPhase(weeksToRace, weekNumber, totalWeeks) {
