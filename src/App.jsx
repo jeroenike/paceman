@@ -506,6 +506,186 @@ function WeekScheduleEditor({ weekStart, profile, weekScheduleOverrides, onSave 
   );
 }
 
+// ── Print Schedule ──
+
+function buildPrintHTML(profile, weekPlans) {
+  const goalLabel = profile.goal === "Custom..." ? profile.goalCustom : profile.goal;
+  const sorted = [...weekPlans]
+    .filter(p => p.weekGoals)
+    .sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+  const totalWeeks = sorted.length;
+
+  const phaseColors = {
+    race:     { bg:"#FFF8ED", fg:"#B07000" },
+    taper:    { bg:"#E8F5F0", fg:"#0A6E5C" },
+    peak:     { bg:"#FFF4E8", fg:"#C2610A" },
+    recovery: { bg:"#F5F5F3", fg:"#555"    },
+    base:     { bg:"#EAF4F0", fg:"#0F6E56" },
+    build:    { bg:"#EEF3FF", fg:"#1B6FE8" },
+  };
+
+  const typeColors = {
+    rest:"#888780", run_threshold:"#1B6FE8", run_easy:"#0F6E56",
+    run_long:"#3B6D11", run_medium_long:"#5A8A1E", run_marathon_pace:"#C2610A",
+    crossfit:"#993C1D", run_interval:"#7C3AED",
+  };
+
+  const typeLabels = {
+    rest:"Rest", run_threshold:"Threshold", run_easy:"Easy Run",
+    run_long:"Long Run", run_medium_long:"Medium Long", run_marathon_pace:"Marathon Pace",
+    crossfit:"Cross-Train", run_interval:"Intervals",
+  };
+
+  function splitMainSet(mainSet) {
+    if (!mainSet) return [];
+    const parts = mainSet.split(/,\s+/).map(s => s.trim()).filter(Boolean);
+    return parts.length > 1 ? parts : [mainSet];
+  }
+
+  const raceDate = profile.goalDate
+    ? new Date(profile.goalDate + "T00:00:00").toLocaleDateString("en-GB", { weekday:"long", day:"numeric", month:"long", year:"numeric" })
+    : null;
+
+  const paces = (() => {
+    const dist = RACE_DISTANCES[profile.goal] || (profile.goalCustomDist ? parseFloat(profile.goalCustomDist) : null);
+    const src = profile.garminPredicted || profile.goalTime;
+    if (!dist || !src) return { threshold: profile.racePace ? null : null, longRun: null };
+    const parts = src.split(":").map(Number);
+    const secs = parts.length === 3 ? parts[0]*3600+parts[1]*60+parts[2] : parts[0]*60+(parts[1]||0);
+    const fitSecs = secs / dist;
+    return {
+      threshold: secsTopace(Math.round(fitSecs * 0.92)),
+      longRun:   secsTopace(Math.round(fitSecs * 1.20)),
+    };
+  })();
+
+  const weeksHTML = sorted.map((plan, i) => {
+    const weekNumber = i + 1;
+    const ws = new Date(plan.weekStart + "T00:00:00");
+    const we = new Date(ws); we.setDate(ws.getDate() + 6);
+    const dateRange = `${ws.toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – ${we.toLocaleDateString("en-GB",{day:"numeric",month:"short"})}`;
+    const weeksToRace = profile.goalDate
+      ? Math.ceil((new Date(profile.goalDate) - ws) / (7*24*60*60*1000))
+      : null;
+    const phase = getTrainingPhase(weeksToRace, weekNumber, totalWeeks);
+    const pc = phase ? (phaseColors[phase.key] || phaseColors.build) : null;
+    const g = plan.weekGoals;
+
+    const daysHTML = DAY_LABELS.map((day, di) => {
+      const dd = new Date(ws); dd.setDate(ws.getDate() + di);
+      const dateStr = dd.toLocaleDateString("en-GB", { day:"numeric", month:"short" });
+      const session = g.daySessions?.[day];
+      const type = session?.type || (profile.schedule?.[day] || "rest");
+      const mainSet = session?.mainSet || null;
+      const color = typeColors[type] || "#888";
+      const label = typeLabels[type] || type;
+      const isRest = type === "rest";
+      const bullets = splitMainSet(mainSet);
+
+      return `<tr class="dr${isRest ? " rest" : ""}">
+        <td class="dl"><b>${day}</b><span>${dateStr}</span></td>
+        <td class="dtp"><span class="tb" style="color:${color};border-color:${color}">${label}</span></td>
+        <td class="dm">${
+          bullets.length > 1
+            ? `<ul>${bullets.map(b => `<li>${b}</li>`).join("")}</ul>`
+            : mainSet ? mainSet : `<span class="nil">Rest day</span>`
+        }</td>
+      </tr>`;
+    }).join("");
+
+    const statsItems = [
+      g.totalDistance ? `${g.totalDistance} km total` : null,
+      g.longRunDistance ? `Long run: ${g.longRunDistance} km` : null,
+      g.runsPlanned ? `${g.runsPlanned} runs` : null,
+      g.targetPace ? `Target: ${g.targetPace}/km` : null,
+    ].filter(Boolean);
+
+    return `<div class="week">
+      <div class="wh" style="${pc ? `background:${pc.bg}` : ""}">
+        <div class="whl">
+          <span class="wn">Week ${weekNumber} of ${totalWeeks}</span>
+          <span class="wd">${dateRange}</span>
+          ${pc ? `<span class="pb" style="color:${pc.fg};background:${pc.bg};border-color:${pc.fg}40">${phase.name}</span>` : ""}
+        </div>
+        <div class="ws">${statsItems.join(" &nbsp;·&nbsp; ")}</div>
+      </div>
+      ${pc && phase.description ? `<div class="pd" style="color:${pc.fg};border-left:3pt solid ${pc.fg}">${phase.description}</div>` : ""}
+      <table class="daytable"><tbody>${daysHTML}</tbody></table>
+    </div>`;
+  }).join("");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>${profile.name ? profile.name + "'s" : "Marathon"} Training Schedule</title>
+<style>
+@page { size: A4 portrait; margin: 12mm 14mm 14mm 14mm; }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;font-size:8pt;color:#1a1a1a;line-height:1.4;background:#fff}
+
+/* Header */
+.ph{display:flex;justify-content:space-between;align-items:flex-end;padding-bottom:9pt;margin-bottom:12pt;border-bottom:2pt solid #1B6FE8}
+.ph h1{font-size:15pt;font-weight:800;margin-bottom:3pt}
+.ph .sub{font-size:8.5pt;color:#555}
+.ph .mr{text-align:right;font-size:7.5pt;color:#777;line-height:1.7}
+
+/* Week card */
+.week{break-inside:avoid;page-break-inside:avoid;margin-bottom:9pt;border:0.75pt solid #ddd;border-radius:3pt;overflow:hidden}
+
+/* Week header */
+.wh{padding:5pt 8pt;border-bottom:0.75pt solid #ddd;display:flex;justify-content:space-between;align-items:center;gap:8pt}
+.whl{display:flex;align-items:center;gap:7pt;flex-wrap:wrap}
+.wn{font-size:9pt;font-weight:800}
+.wd{font-size:7.5pt;color:#777}
+.pb{font-size:6.5pt;font-weight:700;padding:1.5pt 5pt;border-radius:2pt;border:0.75pt solid;text-transform:uppercase;letter-spacing:.04em}
+.ws{font-size:7.5pt;color:#555;white-space:nowrap}
+
+/* Phase description */
+.pd{font-size:7.5pt;font-style:italic;padding:3pt 8pt 3pt 7pt;border-bottom:0.5pt solid #eee;opacity:.9}
+
+/* Days table */
+.daytable{width:100%;border-collapse:collapse}
+.dr{border-top:0.5pt solid #f0f0e8}
+.dr:first-child{border-top:none}
+.rest .dl,.rest .dm{color:#bbb}
+
+/* Day label */
+.dl{width:46pt;padding:4pt 5pt 4pt 8pt;vertical-align:top;white-space:nowrap}
+.dl b{font-size:7.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.05em;display:block}
+.dl span{font-size:6.5pt;color:#aaa}
+
+/* Session type badge */
+.dtp{width:62pt;padding:4pt 5pt;vertical-align:top}
+.tb{font-size:7pt;font-weight:600;padding:1.5pt 5pt;border-radius:8pt;border:0.75pt solid;display:inline-block;white-space:nowrap}
+
+/* Main set */
+.dm{padding:4pt 8pt 4pt 4pt;vertical-align:top;font-size:7.5pt;color:#333;line-height:1.45}
+.dm ul{padding-left:9pt;margin:0}
+.dm li{margin-bottom:1pt}
+.nil{color:#ccc}
+
+@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style>
+</head>
+<body>
+<div class="ph">
+  <div>
+    <h1>${profile.name ? `${profile.name}'s Training Schedule` : "Training Schedule"}</h1>
+    <div class="sub">${goalLabel || "Marathon"} &nbsp;·&nbsp; Goal: ${profile.goalTime || "—"}${raceDate ? ` &nbsp;·&nbsp; Race: ${raceDate}` : ""}</div>
+  </div>
+  <div class="mr">
+    ${profile.experience ? `<div>${profile.experience.replace(/_/g," ")}</div>` : ""}
+    ${paces.threshold ? `<div>Threshold: ${paces.threshold}/km &nbsp;·&nbsp; Long run: ${paces.longRun}/km</div>` : ""}
+    ${profile.racePace ? `<div>Race pace: ${profile.racePace}/km</div>` : ""}
+    <div>Printed ${new Date().toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"})}</div>
+  </div>
+</div>
+${weeksHTML}
+</body>
+</html>`;
+}
+
 // ── Home Screen ──
 
 function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGeneratePlan, onGenerateAllPlans, onGoProfile, onSaveScheduleOverride, onSaveSession, onSetDayIntensity, onSetDayInjury }) {
@@ -542,6 +722,16 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
     setActiveWeekStart(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`);
   }
 
+  function handlePrintSchedule() {
+    const plans = (store.weekPlans || []).filter(p => p.weekGoals);
+    if (!plans.length) return;
+    const html = buildPrintHTML(store.profile, plans);
+    const win = window.open("", "_blank");
+    if (!win) return;
+    win.document.write(html);
+    win.document.close();
+  }
+
   return (
     <div style={{ padding:"0 16px 24px",overflowY:"auto",flex:1 }}>
       {/* Header */}
@@ -550,12 +740,20 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
           <div style={{ fontSize:22,fontWeight:800,color:"#1a1a1a",lineHeight:1.2 }}>
             {store.profile.name?`${store.profile.name}'s Plan`:"Training Plan"}
           </div>
-          {daysToRace!==null&&daysToRace>0&&(
-            <span style={{ flexShrink:0,fontSize:11,padding:"3px 9px",borderRadius:6,background:"#f0f6ff",color:"#1B6FE8",fontWeight:700,marginTop:3 }}>{daysToRace}d to go</span>
-          )}
-          {daysToRace===0&&(
-            <span style={{ flexShrink:0,fontSize:11,padding:"3px 9px",borderRadius:6,background:"#fff8e0",color:"#b07000",fontWeight:700,marginTop:3 }}>Race day!</span>
-          )}
+          <div style={{ display:"flex",alignItems:"center",gap:8,marginTop:3 }}>
+            {(store.weekPlans||[]).some(p=>p.weekGoals)&&(
+              <button onClick={handlePrintSchedule}
+                style={{ fontSize:11,color:"#888",background:"none",border:"1px solid #e0e0dc",borderRadius:6,padding:"3px 9px",cursor:"pointer",fontWeight:600,flexShrink:0 }}>
+                Print ↗
+              </button>
+            )}
+            {daysToRace!==null&&daysToRace>0&&(
+              <span style={{ flexShrink:0,fontSize:11,padding:"3px 9px",borderRadius:6,background:"#f0f6ff",color:"#1B6FE8",fontWeight:700 }}>{daysToRace}d to go</span>
+            )}
+            {daysToRace===0&&(
+              <span style={{ flexShrink:0,fontSize:11,padding:"3px 9px",borderRadius:6,background:"#fff8e0",color:"#b07000",fontWeight:700 }}>Race day!</span>
+            )}
+          </div>
         </div>
         {goalLabel&&(
           <div style={{ fontSize:13,color:"#aaa",marginTop:3 }}>{goalLabel}{store.profile.goalTime?` · ${store.profile.goalTime}`:""}</div>
