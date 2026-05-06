@@ -1240,7 +1240,7 @@ describe("buildCoachingRules", () => {
     const thuRule = r.find(s => s.toLowerCase().includes("thursday") && s.includes("ROTATE"));
     expect(thuRule).toBeDefined();
     expect(thuRule.toLowerCase()).toMatch(/steady finish|steady/);
-    expect(thuRule.toLowerCase()).toMatch(/rolling terrain/);
+    expect(thuRule.toLowerCase()).toMatch(/hill-based|uphill/);
     expect(thuRule.toLowerCase()).toMatch(/mp block|marathon pace/);
   });
 
@@ -1349,6 +1349,91 @@ describe("buildCoachingRules", () => {
   it("no-race-training rule applies in Base phase", () => {
     const r = rules(42.195, "recreational", "130-145", basePhase);
     expect(r.some(s => s.toLowerCase().includes("force pace"))).toBe(true);
+  });
+
+  // Base phase explicit restriction
+  it("includes explicit base phase restriction (no threshold/MP/intervals)", () => {
+    const r = rules(42.195, "recreational", "130-145", basePhase);
+    expect(r.some(s => s.includes("BASE PHASE") && s.toLowerCase().includes("no threshold"))).toBe(true);
+  });
+
+  it("base phase restriction does NOT appear in Build phase", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    expect(r.some(s => s.includes("BASE PHASE RESTRICTION"))).toBe(false);
+  });
+
+  // MP stacking rule
+  it("includes MP stacking rule in Build phase", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    expect(r.some(s => s.includes("MP STACKING"))).toBe(true);
+  });
+
+  it("MP stacking rule limits Tue+Thu+Sun simultaneous MP", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    const rule = r.find(s => s.includes("MP STACKING"));
+    expect(rule).toBeDefined();
+    expect(rule.toLowerCase()).toMatch(/tue|thursday/i);
+    expect(rule.toLowerCase()).toMatch(/max 1|not both/i);
+  });
+
+  it("MP stacking rule appears in Peak phase", () => {
+    const r = rules(42.195, "recreational", "130-145", { key: "peak" });
+    expect(r.some(s => s.includes("MP STACKING"))).toBe(true);
+  });
+
+  it("MP stacking rule does NOT appear in Base phase", () => {
+    const r = rules(42.195, "recreational", "130-145", basePhase);
+    expect(r.some(s => s.includes("MP STACKING"))).toBe(false);
+  });
+
+  // Early long run rule (Base phase)
+  it("includes early long run rule in Base phase", () => {
+    const r = rules(42.195, "recreational", "130-145", basePhase);
+    expect(r.some(s => s.toLowerCase().includes("early long run") || (s.toLowerCase().includes("weeks 2") && s.toLowerCase().includes("long")))).toBe(true);
+  });
+
+  it("early long run rule says NOT marathon pace", () => {
+    const r = rules(42.195, "recreational", "130-145", basePhase);
+    const rule = r.find(s => s.toLowerCase().includes("early long run") || (s.toLowerCase().includes("weeks 2") && s.toLowerCase().includes("long")));
+    expect(rule).toBeDefined();
+    expect(rule.toLowerCase()).toMatch(/not marathon pace|faster than easy/i);
+  });
+
+  // Peak MP limit rule
+  it("includes peak week MP limit rule in Peak phase", () => {
+    const r = rules(42.195, "recreational", "130-145", { key: "peak" });
+    expect(r.some(s => s.includes("PEAK WEEK MP LIMIT"))).toBe(true);
+  });
+
+  it("peak MP limit prohibits triple MP stacking", () => {
+    const r = rules(42.195, "recreational", "130-145", { key: "peak" });
+    const rule = r.find(s => s.includes("PEAK WEEK MP LIMIT"));
+    expect(rule).toBeDefined();
+    expect(rule.toLowerCase()).toMatch(/triple|tue\+thu\+sun|not both/i);
+  });
+
+  it("peak MP limit does NOT appear in Build phase", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    expect(r.some(s => s.includes("PEAK WEEK MP LIMIT"))).toBe(false);
+  });
+
+  // Taper no-VO2max rule
+  it("includes taper no-VO2max rule in Taper phase", () => {
+    const r = rules(42.195, "recreational", "130-145", taperPhase);
+    expect(r.some(s => s.includes("TAPER INTENSITY"))).toBe(true);
+  });
+
+  it("taper no-VO2max rule says replace with MP blocks and strides", () => {
+    const r = rules(42.195, "recreational", "130-145", taperPhase);
+    const rule = r.find(s => s.includes("TAPER INTENSITY"));
+    expect(rule).toBeDefined();
+    expect(rule.toLowerCase()).toMatch(/mp block|marathon pace block/i);
+    expect(rule.toLowerCase()).toMatch(/strides/i);
+  });
+
+  it("taper no-VO2max rule does NOT appear in Build phase", () => {
+    const r = rules(42.195, "recreational", "130-145", buildPhase);
+    expect(r.some(s => s.includes("TAPER INTENSITY"))).toBe(false);
   });
 });
 
@@ -1702,5 +1787,38 @@ describe("validateSchedule", () => {
     const r = validateSchedule(goodSchedule, {}, null);
     expect(r.find(x => x.id === "tuesday_rotation")).toBeUndefined();
     expect(r.find(x => x.id === "long_run_present")).toBeDefined();
+  });
+
+  // MP stacking (Tue + Thu)
+  it("passes mp_stacking when MP not on both Tue and Thu", () => {
+    const r = validateSchedule(goodSchedule, goodRotations, marathon).find(x => x.id === "mp_stacking");
+    expect(r.status).toBe("pass");
+  });
+
+  it("warns mp_stacking when MP is in both Tue and Thu rotation pools", () => {
+    const stackingRotations = {
+      Tue: ["run_interval","run_threshold","run_marathon_pace"],
+      Thu: ["run_medium_long","run_marathon_pace"],
+    };
+    const r = validateSchedule(goodSchedule, stackingRotations, marathon).find(x => x.id === "mp_stacking");
+    expect(r.status).toBe("warn");
+    expect(r.fix).toBeTruthy();
+  });
+
+  it("fails mp_stacking when both Tue and Thu are fixed to MP with no rotation", () => {
+    const sched = { ...goodSchedule, Tue:"run_marathon_pace", Thu:"run_marathon_pace" };
+    const r = validateSchedule(sched, {}, marathon).find(x => x.id === "mp_stacking");
+    expect(r.status).toBe("fail");
+  });
+
+  it("passes mp_stacking when MP is only on Tue (not Thu)", () => {
+    const sched = { ...goodSchedule, Tue:"run_marathon_pace" };
+    const r = validateSchedule(sched, {}, marathon).find(x => x.id === "mp_stacking");
+    expect(r.status).toBe("pass");
+  });
+
+  it("does not include mp_stacking check for half marathon", () => {
+    const r = validateSchedule(goodSchedule, goodRotations, 21.0975);
+    expect(r.find(x => x.id === "mp_stacking")).toBeUndefined();
   });
 });

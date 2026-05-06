@@ -2731,6 +2731,26 @@ SCORE_JSON`);
       return null;
     })();
 
+    // Phase-specific mandatory constraints injected above coaching rules so the AI cannot deprioritize them
+    const phaseConstraints = (() => {
+      if (!isMarathon) return [];
+      const phaseKey = phase?.key;
+      const c = [];
+      if (phaseKey === "base") {
+        c.push("MANDATORY BASE PHASE: Only run_easy, run_hills, or rest this week. NO run_threshold, NO run_marathon_pace, NO run_interval. Violating this causes overtraining in the foundation phase.");
+      }
+      if (phaseKey === "build" || phaseKey === "peak") {
+        c.push("MANDATORY MP STACKING RULE: run_marathon_pace is a HARD session. Max 2 hard sessions total (run_threshold + run_interval + run_marathon_pace). If Sunday long run includes MP → Thursday must NOT be run_marathon_pace. Never assign MP to both Tuesday AND Thursday in the same week.");
+      }
+      if (phaseKey === "peak") {
+        c.push("MANDATORY PEAK MP LIMIT: Max 1 dedicated MP session on Tuesday OR Thursday (never both). Long run MP segment counts as the second hard session. No triple MP configuration (Tue+Thu+Sun).");
+      }
+      if (phaseKey === "taper") {
+        c.push("MANDATORY TAPER RULE: NO run_interval (no 5K-pace work) this week. Quality session must use run_threshold or run_marathon_pace with reduced volume — short MP blocks (3–6km) or strides only.");
+      }
+      return c;
+    })();
+
     const prompt = `Generate a detailed weekly training plan for week starting ${weekStart}.
 
 ${periodCtx}
@@ -2744,7 +2764,7 @@ Athlete profile:
 
 Recent sessions:
 ${recentSessions||"No sessions logged yet"}
-${longRunConstraint ? `\n${longRunConstraint}\n` : ""}
+${longRunConstraint ? `\n${longRunConstraint}\n` : ""}${phaseConstraints.length ? `\n${phaseConstraints.join("\n")}\n` : ""}
 Coaching rules:
 ${distanceGuidance ? `- ${distanceGuidance}\n` : ""}- ${coachingRules.join("\n- ")}
 
