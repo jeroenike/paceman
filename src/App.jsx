@@ -55,7 +55,7 @@ function profileTrainingPaces(p) {
 }
 
 const defaultProfile = {
-  name:"", goal:"", goalCustom:"", goalCustomDist:"", goalDate:"", goalTime:"", garminPredicted:"", racePace:"",
+  name:"", goal:"", goalCustom:"", goalCustomDist:"", goalDate:"", trainingStartDate:"", goalTime:"", garminPredicted:"", racePace:"",
   easyHR:"", experience:"", injuries:[],
   schedule:{ Mon:"rest", Tue:"run_threshold", Wed:"crossfit", Thu:"run_easy", Fri:"crossfit", Sat:"crossfit", Sun:"run_long" },
 };
@@ -361,12 +361,16 @@ function LogForm({ initial, onSave, onCancel, stravaActivities, onImportStrava, 
 
 // ── Week Strip ──
 
-function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate }) {
+function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate, trainingStartDate }) {
   const stripRef = useRef(null);
   const activeRef = useRef(null);
   const weeks = [];
   const cur = new Date(getCurrentWeekStart() + "T00:00:00");
+  const trainingStartWeek = trainingStartDate ? getWeekStart(new Date(trainingStartDate + "T00:00:00")) : null;
   const from = new Date(cur); from.setDate(from.getDate() - 42);
+  if (trainingStartWeek && new Date(trainingStartWeek + "T00:00:00") < from) {
+    from.setTime(new Date(trainingStartWeek + "T00:00:00").getTime());
+  }
   const to = new Date(cur); to.setDate(to.getDate() + 56);
   const raceWeekStart = raceDate ? getWeekStart(new Date(raceDate + "T00:00:00")) : null;
   if (raceDate) { const rd = new Date(raceDate + "T00:00:00"); to.setTime(rd.getTime()); }
@@ -401,16 +405,19 @@ function WeekStrip({ weekPlans, sessions, activeWeekStart, onSelect, raceDate })
       : [];
     const isCurrentWeek = ws===getCurrentWeekStart();
     const isRaceWeek = raceWeekStart && ws===raceWeekStart;
-    const chipBorder = isActive?"#1B6FE8":isRaceWeek?"#e8a020":isCurrentWeek?"#93b8f5":"#eee";
-    const chipBg = isActive?"#f0f6ff":isRaceWeek?"#fff8ed":isCurrentWeek?"#f5f8ff":"#fff";
-    const labelColor = isActive?"#1B6FE8":isRaceWeek?"#c07000":isCurrentWeek?"#4a85d4":"#888";
+    const isTrainingStart = trainingStartWeek && ws===trainingStartWeek && ws!==getCurrentWeekStart();
+    const chipBorder = isActive?"#1B6FE8":isRaceWeek?"#e8a020":isTrainingStart?"#1B6FE8":isCurrentWeek?"#93b8f5":"#eee";
+    const chipBg = isActive?"#f0f6ff":isRaceWeek?"#fff8ed":isTrainingStart?"#f0f6ff":isCurrentWeek?"#f5f8ff":"#fff";
+    const labelColor = isActive?"#1B6FE8":isRaceWeek?"#c07000":isTrainingStart?"#1B6FE8":isCurrentWeek?"#4a85d4":"#888";
     return (
       <button key={ws} ref={isActive?activeRef:null} onClick={()=>onSelect(ws)}
         style={{ flexShrink:0,padding:"5px 9px",borderRadius:8,border:`1.5px solid ${chipBorder}`,background:chipBg,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2 }}>
         {isRaceWeek&&<span style={{ fontSize:12,lineHeight:1 }}>🏁</span>}
-        <span style={{ fontSize:11,fontWeight:isActive||isRaceWeek?700:isCurrentWeek?600:400,color:labelColor,whiteSpace:"nowrap" }}>{label}</span>
+        {isTrainingStart&&!isActive&&<span style={{ fontSize:12,lineHeight:1 }}>🏃</span>}
+        <span style={{ fontSize:11,fontWeight:isActive||isRaceWeek||isTrainingStart?700:isCurrentWeek?600:400,color:labelColor,whiteSpace:"nowrap" }}>{label}</span>
         {isRaceWeek&&!isActive&&<span style={{ fontSize:9,fontWeight:700,color:"#c07000",letterSpacing:"0.04em",lineHeight:1 }}>RACE</span>}
-        {isCurrentWeek&&!isActive&&!isRaceWeek&&<span style={{ fontSize:9,fontWeight:700,color:"#4a85d4",letterSpacing:"0.04em",lineHeight:1 }}>NOW</span>}
+        {isTrainingStart&&!isActive&&<span style={{ fontSize:9,fontWeight:700,color:"#1B6FE8",letterSpacing:"0.04em",lineHeight:1 }}>START</span>}
+        {isCurrentWeek&&!isActive&&!isRaceWeek&&!isTrainingStart&&<span style={{ fontSize:9,fontWeight:700,color:"#4a85d4",letterSpacing:"0.04em",lineHeight:1 }}>NOW</span>}
         <div style={{ display:"flex",gap:2,alignItems:"center" }}>
           {plannedDays.length>0
             ? plannedDays.map(({day,type,linked})=>{
@@ -544,6 +551,9 @@ function buildPrintHTML(profile, weekPlans) {
 
   const raceDate = profile.goalDate
     ? new Date(profile.goalDate + "T00:00:00").toLocaleDateString("en-GB", { weekday:"long", day:"numeric", month:"long", year:"numeric" })
+    : null;
+  const trainingStartLabel = profile.trainingStartDate
+    ? new Date(profile.trainingStartDate + "T00:00:00").toLocaleDateString("en-GB", { day:"numeric", month:"long", year:"numeric" })
     : null;
 
   const paces = (() => {
@@ -695,7 +705,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-se
 <div class="ph">
   <div>
     <h1>${profile.name ? `${profile.name}'s Training Schedule` : "Training Schedule"}</h1>
-    <div class="sub">${goalLabel || "Marathon"} &nbsp;·&nbsp; Goal: ${profile.goalTime || "—"}${raceDate ? ` &nbsp;·&nbsp; Race: ${raceDate}` : ""}</div>
+    <div class="sub">${goalLabel || "Marathon"} &nbsp;·&nbsp; Goal: ${profile.goalTime || "—"}${trainingStartLabel ? ` &nbsp;·&nbsp; From: ${trainingStartLabel}` : ""}${raceDate ? ` &nbsp;·&nbsp; Race: ${raceDate}` : ""}</div>
   </div>
   <div class="mr">
     ${profile.experience ? `<div>${profile.experience.replace(/_/g," ")}</div>` : ""}
@@ -730,7 +740,10 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
   const weeksToRaceActive = p.goalDate
     ? Math.ceil((new Date(p.goalDate) - new Date(activeWeekStart + "T00:00:00")) / (7*24*60*60*1000))
     : null;
-  const allPlanWeeks = p.goalDate ? getWeeksToRace(getCurrentWeekStart(), p.goalDate) : [];
+  const trainingStartWeek = p.trainingStartDate
+    ? getWeekStart(new Date(p.trainingStartDate + "T00:00:00"))
+    : getCurrentWeekStart();
+  const allPlanWeeks = p.goalDate ? getWeeksToRace(trainingStartWeek, p.goalDate) : [];
   const activeWeekNumber = allPlanWeeks.indexOf(activeWeekStart) + 1;
   const trainingPhase = getTrainingPhase(weeksToRaceActive, activeWeekNumber || null, allPlanWeeks.length || null);
 
@@ -840,7 +853,7 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
       </div>
 
       {/* Week strip */}
-      <WeekStrip weekPlans={store.weekPlans} sessions={store.sessions} activeWeekStart={activeWeekStart} onSelect={setActiveWeekStart} raceDate={store.profile.goalDate}/>
+      <WeekStrip weekPlans={store.weekPlans} sessions={store.sessions} activeWeekStart={activeWeekStart} onSelect={setActiveWeekStart} raceDate={store.profile.goalDate} trainingStartDate={store.profile.trainingStartDate}/>
 
       {/* Arrow nav + week label */}
       {(()=>{ const currentWeekStart=getCurrentWeekStart(); return (
@@ -928,6 +941,19 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
 
       <ErrorBox message={error}/>
       {loading&&<Dots/>}
+
+      {/* Training start banner */}
+      {hasProfile && p.trainingStartDate && activeWeekStart === trainingStartWeek && (
+        <div style={{ padding:"10px 12px",borderRadius:8,background:"#f0f6ff",borderLeft:"3px solid #1B6FE8",marginBottom:10,display:"flex",alignItems:"center",gap:8 }}>
+          <span style={{ fontSize:15 }}>🏃</span>
+          <div>
+            <div style={{ fontSize:12,fontWeight:700,color:"#1B6FE8" }}>Training block starts</div>
+            <div style={{ fontSize:12,color:"#1B6FE8",opacity:0.8 }}>
+              {allPlanWeeks.length} weeks to race day{p.goalDate ? ` · ${new Date(p.goalDate+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"long",year:"numeric"})}` : ""}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Training phase banner */}
       {trainingPhase && hasProfile && (
@@ -2054,6 +2080,7 @@ function ProfileScreen({ store, persist, onSaved, isDevMode, onSignOut }) {
             )}
           </div>
           <Field label="Race date" value={draft.goalDate} onChange={v=>set("goalDate",v)} type="date"/>
+          <Field label="Training start date" value={draft.trainingStartDate||""} onChange={v=>set("trainingStartDate",v)} type="date"/>
         </div>
         <div>
           <label style={{ fontSize:11,fontWeight:700,color:"#aaa",textTransform:"uppercase",letterSpacing:"0.06em",display:"block",marginBottom:5 }}>Race pace</label>
@@ -2683,9 +2710,12 @@ DAY_JSON`
   async function generateAllPlans() {
     const raceDate = store.profile.goalDate;
     if (!raceDate) { setError("Set a race date in your profile first."); return; }
+    const startWeek = store.profile.trainingStartDate
+      ? getWeekStart(new Date(store.profile.trainingStartDate + "T00:00:00"))
+      : getCurrentWeekStart();
     setLoading(true); setError(""); setLoadingMsg("");
     try {
-      const weeks = getWeeksToRace(getCurrentWeekStart(), raceDate);
+      const weeks = getWeeksToRace(startWeek, raceDate);
       const totalWeeks = weeks.length;
       let allPlans = [...(store.weekPlans||[])];
 
