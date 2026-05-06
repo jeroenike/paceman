@@ -2248,8 +2248,9 @@ SCORE_JSON`);
       const exp = p.experience;
       if (raceDist >= 42) {
         const weeklyRange = exp === "club_athlete" ? "65–90" : exp === "competitive_recreational" ? "55–75" : "45–65";
-        const longRunRange = exp === "club_athlete" ? "32–38" : exp === "competitive_recreational" ? "30–35" : "26–32";
-        return `MARATHON volume targets: weekly total ${weeklyRange}km, long run building to ${longRunRange}km peak, threshold sessions 12–18km total. Do NOT generate half-marathon-level volumes.`;
+        const longRunStart = exp === "club_athlete" ? "20–24" : exp === "competitive_recreational" ? "18–22" : "16–20";
+        const longRunPeak = exp === "club_athlete" ? "32–38" : exp === "competitive_recreational" ? "30–35" : "26–32";
+        return `MARATHON volume targets: weekly total ${weeklyRange}km. Long run is the primary driver — start at ${longRunStart}km in early weeks, add ~2km per non-recovery week, peak at ${longRunPeak}km (3 weeks out). Long run can be 40–50% of weekly volume. Threshold sessions 12–18km total. Do NOT generate half-marathon-level volumes.`;
       }
       if (raceDist >= 21) {
         const weeklyRange = exp === "club_athlete" ? "55–70" : exp === "competitive_recreational" ? "45–60" : "35–50";
@@ -2278,7 +2279,7 @@ ${recentSessions||"No sessions logged yet"}
 
 Coaching rules:
 ${distanceGuidance ? `- ${distanceGuidance}\n` : ""}- Build volume ~10% per week (unless recovery/taper week)
-- Long run = 30–40% of weekly volume
+${raceDist && raceDist >= 42 ? "- Long run progresses independently per the marathon targets above — do NOT cap it at 30–40% of weekly volume" : "- Long run = 30–40% of weekly volume"}
 - Hard sessions (threshold/intervals) max 2x/week, never back-to-back
 - Easy runs at HR ${p.easyHR||"below 145"} bpm, truly conversational
 - mainSet: specific targets — exact distance, pace, reps, rest, HR zone
