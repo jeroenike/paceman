@@ -687,6 +687,29 @@ export function validateSchedule(schedule, scheduleRotations, raceDist) {
         : "No marathon pace sessions anywhere in schedule or rotation pools",
       fix: hasMPAnywhere ? null : "Add 'Marathon Pace' to Tuesday's rotation pool",
     });
+
+    // ── 10. No MP stacking on Tue + Thu ─────────────────────────────────────────
+    const tueMayHaveMP = sched["Tue"] === "run_marathon_pace" || (rotations["Tue"] || []).includes("run_marathon_pace");
+    const thuMayHaveMP = sched["Thu"] === "run_marathon_pace" || (rotations["Thu"] || []).includes("run_marathon_pace");
+    const tueAlwaysMP  = sched["Tue"] === "run_marathon_pace" && !(rotations["Tue"] || []).length;
+    const thuAlwaysMP  = sched["Thu"] === "run_marathon_pace" && !(rotations["Thu"] || []).length;
+    if (tueMayHaveMP && thuMayHaveMP) {
+      results.push({
+        id: "mp_stacking",
+        rule: "No MP stacking on Tue+Thu",
+        status: (tueAlwaysMP && thuAlwaysMP) ? "fail" : "warn",
+        message: "Marathon Pace can appear on both Tuesday and Thursday — risks stacking 2 hard MP sessions in one week",
+        fix: "Remove Marathon Pace from Thursday's rotation. Keep MP on Tuesday; use Medium Long or Hill Repeats for Thursday.",
+      });
+    } else {
+      results.push({
+        id: "mp_stacking",
+        rule: "No MP stacking on Tue+Thu",
+        status: "pass",
+        message: "Marathon Pace is not scheduled on both Tuesday and Thursday simultaneously",
+        fix: null,
+      });
+    }
   }
 
   return results;
@@ -713,10 +736,17 @@ export function buildCoachingRules(raceDist, experience, easyHR, phase) {
 
   if (isMarathon) {
     rules.push("Long run progresses independently as the primary adaptation driver — percentage cap does not apply for marathon");
+
+    if (phaseKey === "base") {
+      rules.push("BASE PHASE RESTRICTION: Only easy runs (HR-based), strides from week 2+, and light hill work. NO threshold sessions, NO marathon pace, NO VO2max intervals. Aerobic foundation only — intensity added in Build phase.");
+      rules.push("Early long runs (weeks 2–6): run last 3–5km slightly faster than easy pace — NOT marathon pace. Builds fatigue resistance without race-specificity stress.");
+    }
+
     if (phaseKey === "build" || phaseKey === "peak") {
       rules.push("Progression long runs: from week 5 onward, run the final 5–12km at marathon race pace to build race specificity");
       rules.push("Tuesday intensity MUST ROTATE every 3 weeks — VO2max intervals (5–6×1km at 5K effort) → Threshold (8–10km at threshold pace) → Marathon pace (10km at race pace). Never threshold every single Tuesday");
-      rules.push("Thursday medium-long stimulus must ROTATE weekly: Week A = steady finish (last 4–5km at 15–20s/km faster than easy), Week B = rolling terrain effort-based, Week C = mid-run MP block (5–8km at race pace). Never repeat the same structure two weeks running. All-easy Thursday runs are wasted miles for a performance goal");
+      rules.push("Thursday medium-long stimulus must ROTATE weekly: Week A = steady finish (last 4–5km at 15–20s/km faster than easy), Week B = hill-based (5–8×60–90s uphill efforts, jog-down recovery), Week C = MP block (5–8km at race pace — only if no other MP session that week). Never repeat the same structure two weeks running. All-easy Thursday runs are wasted miles for a performance goal");
+      rules.push("MP STACKING RULE: Marathon pace counts as a hard session. If Sunday long run includes an MP segment → Thursday MUST NOT include MP. Max 1 dedicated MP session (Tuesday OR Thursday) + 1 MP segment in long run per week. Never stack MP on Tue+Thu+Sun in the same week.");
       rules.push("Long run MP segments must progress each non-recovery week: 6–8km MP in early Build → 10km MP in mid-Build → 12–14km MP in late Build/Peak");
       rules.push("Long run stimulus must VARY week-to-week: rotate between progression finish (last 5–8km faster), rolling terrain in the final third, and broken MP blocks (e.g. 3×4km at race pace with 2min easy). Never repeat the same long run structure two consecutive weeks");
       rules.push("Downhill conditioning: include controlled downhill running at least every 2 weeks. Cue: relaxed upper body, quick turnover, avoid braking. Builds eccentric quad strength for late-race durability");
@@ -728,6 +758,7 @@ export function buildCoachingRules(raceDist, experience, easyHR, phase) {
 
   if (isMarathon && phaseKey === "peak") {
     rules.push("Peak long run must reach 30–32km for recreational/competitive athletes. A 24km peak long run prepares for completion only, not performance");
+    rules.push("PEAK WEEK MP LIMIT: max 1 dedicated MP session on Tuesday OR Thursday (not both), plus 1 MP segment inside the long run. No triple MP stacking (Tue+Thu+Sun). Thursday in peak week must NOT include MP if Tuesday already has MP.");
     rules.push("Race simulation: at least 2 long runs this phase must include ≥10km at marathon pace within the final 12km, on rolling terrain. This bridges training to race execution");
   }
 
@@ -747,6 +778,10 @@ export function buildCoachingRules(raceDist, experience, easyHR, phase) {
 
   if (isMarathon && (phaseKey === "build" || phaseKey === "peak" || phaseKey === "taper")) {
     rules.push("Long runs ≥18km must include fueling practice: gel at 45 min, every 25–30 min after. Nutrition execution on race day is a skill that must be trained");
+  }
+
+  if (isMarathon && phaseKey === "taper") {
+    rules.push("TAPER INTENSITY: NO VO2max intervals (no 5K-pace work) during taper weeks. Replace with short marathon pace blocks (3–6km total) and strides. Keep 1 quality MP-focused session per week. Stay sharp, not fatigued.");
   }
 
   rules.push(`Easy runs at HR ${easyHR || "below 145"} bpm, truly conversational`);
