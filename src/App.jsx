@@ -2390,19 +2390,19 @@ function ProfileScreen({ store, persist, onSaved, isDevMode, onSignOut, onGenera
 
         {/* Generate Full Plan section */}
         {draft.goalDate&&onGenerateAllPlans&&(()=>{
-          const currentHash = JSON.stringify({schedule:draft.schedule, scheduleRotations:draft.scheduleRotations||{}});
+          const currentHash = JSON.stringify({schedule:draft.schedule, scheduleRotations:draft.scheduleRotations||{}, goalTime:draft.goalTime, goalDate:draft.goalDate, racePace:draft.racePace, experience:draft.experience, easyHR:draft.easyHR, trainingStartDate:draft.trainingStartDate});
           const storedHash = store.planScheduleHash;
           const hasPlans = (store.weekPlans||[]).some(p=>p.weekGoals);
           const scheduleChanged = hasPlans && storedHash && currentHash !== storedHash;
-          const unsavedChanges = JSON.stringify(draft.schedule) !== JSON.stringify(store.profile.schedule) ||
-            JSON.stringify(draft.scheduleRotations||{}) !== JSON.stringify(store.profile.scheduleRotations||{});
+          const PLAN_FIELDS = ["schedule","scheduleRotations","goalTime","goalDate","racePace","experience","easyHR","trainingStartDate"];
+          const unsavedChanges = PLAN_FIELDS.some(k => JSON.stringify(draft[k]??null) !== JSON.stringify(store.profile[k]??null));
           return (
             <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
               {scheduleChanged&&(
                 <div style={{ padding:"10px 14px",borderRadius:8,background:"#fffbeb",border:"1px solid #f5c518",display:"flex",gap:8,alignItems:"flex-start" }}>
                   <span style={{ fontSize:14,flexShrink:0 }}>⚠️</span>
                   <span style={{ fontSize:12,color:"#7a5a00",lineHeight:1.4 }}>
-                    Schedule changed since last plan generation. Regenerate to apply the new schedule to all weeks.
+                    Profile changed since last plan generation. Regenerate to apply the updated settings to all weeks.
                   </span>
                 </div>
               )}
@@ -2999,7 +2999,7 @@ DAY_JSON`
         if (i < weeks.length - 1) await new Promise(r => setTimeout(r, 500));
       }
       const p = store.profile;
-      persist({ weekPlans:allPlans, planScheduleHash:JSON.stringify({schedule:p.schedule, scheduleRotations:p.scheduleRotations||{}}) });
+      persist({ weekPlans:allPlans, planScheduleHash:JSON.stringify({schedule:p.schedule, scheduleRotations:p.scheduleRotations||{}, goalTime:p.goalTime, goalDate:p.goalDate, racePace:p.racePace, experience:p.experience, easyHR:p.easyHR, trainingStartDate:p.trainingStartDate}) });
     } catch(e) { setError(e.message); }
     finally { setLoading(false); setLoadingMsg(""); }
   }
