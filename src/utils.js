@@ -432,6 +432,9 @@ const FINAL_TAPER_BANNED   = new Set(["run_hills", "run_interval"]);
 /**
  * Return a phase-aware copy of the user's schedule for prompt-time use.
  *
+ *  - base          → quality types (threshold/intervals/MP) are downgraded
+ *                    to run_easy; hills are kept (light hill work is allowed
+ *                    during base for aerobic strength).
  *  - recovery week → quality types (threshold/intervals/MP) and hills are
  *                    downgraded to run_easy. Run days stay run days.
  *  - taper / race  → hills and intervals are downgraded to run_easy.
@@ -447,7 +450,9 @@ export function applyPhaseSchedule(schedule, phaseKey) {
   const out = {};
   for (const day of DAY_LABELS) {
     let t = schedule[day] || "rest";
-    if (phaseKey === "recovery" && (HARD_QUALITY_TYPES.has(t) || t === "run_hills")) {
+    if (phaseKey === "base" && HARD_QUALITY_TYPES.has(t)) {
+      t = "run_easy";
+    } else if (phaseKey === "recovery" && (HARD_QUALITY_TYPES.has(t) || t === "run_hills")) {
       t = "run_easy";
     } else if ((phaseKey === "taper" || phaseKey === "race") && FINAL_TAPER_BANNED.has(t)) {
       t = "run_easy";
