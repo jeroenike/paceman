@@ -890,11 +890,14 @@ describe("getDistanceGuidance", () => {
     it("club_athlete: correct weekly range 65–90km", () =>
       expect(getDistanceGuidance(42.195, "club_athlete")).toContain("65–90"));
 
-    it("recreational: peak long run 26–32km", () =>
-      expect(getDistanceGuidance(42.195, "recreational")).toContain("26–32"));
+    it("recreational: peak long run 30–32km (performance minimum)", () =>
+      expect(getDistanceGuidance(42.195, "recreational")).toContain("30–32"));
 
-    it("club_athlete: peak long run 32–38km", () =>
-      expect(getDistanceGuidance(42.195, "club_athlete")).toContain("32–38"));
+    it("recreational: peak long run does NOT allow 26km (too low for performance goal)", () =>
+      expect(getDistanceGuidance(42.195, "recreational")).not.toContain("26–32"));
+
+    it("club_athlete: peak long run 34–38km", () =>
+      expect(getDistanceGuidance(42.195, "club_athlete")).toContain("34–38"));
 
     it("threshold capped at 14km (not 18km)", () => {
       const g = getDistanceGuidance(42.195, "recreational");

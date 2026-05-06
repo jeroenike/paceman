@@ -473,7 +473,7 @@ export function getDistanceGuidance(raceDist, experience) {
   if (raceDist >= 42) {
     const weekly = experience === "club_athlete" ? "65–90" : experience === "competitive_recreational" ? "55–75" : "45–65";
     const longStart = experience === "club_athlete" ? "20–24" : experience === "competitive_recreational" ? "18–22" : "16–20";
-    const longPeak = experience === "club_athlete" ? "32–38" : experience === "competitive_recreational" ? "30–35" : "26–32";
+    const longPeak = experience === "club_athlete" ? "34–38" : experience === "competitive_recreational" ? "32–35" : "30–32";
     return `MARATHON volume targets: weekly total ${weekly}km. Long run is the primary driver — start at ${longStart}km in early weeks, add ~2km per non-recovery week, peak at ${longPeak}km (4 weeks out). Long run can be 40–50% of weekly volume. Threshold sessions 10–14km total. Do NOT generate half-marathon-level volumes.`;
   }
   if (raceDist >= 21) {
