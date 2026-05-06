@@ -536,13 +536,13 @@ function buildPrintHTML(profile, weekPlans) {
   const typeColors = {
     rest:"#888780", run_threshold:"#1B6FE8", run_easy:"#0F6E56",
     run_long:"#3B6D11", run_medium_long:"#5A8A1E", run_marathon_pace:"#C2610A",
-    crossfit:"#993C1D", run_interval:"#7C3AED",
+    run_hills:"#8B5E3C", crossfit:"#993C1D", run_interval:"#7C3AED",
   };
 
   const typeLabels = {
     rest:"Rest", run_threshold:"Threshold", run_easy:"Easy Run",
     run_long:"Long Run", run_medium_long:"Medium Long", run_marathon_pace:"Marathon Pace",
-    crossfit:"Cross-Train", run_interval:"Intervals",
+    run_hills:"Hill Repeats", crossfit:"Cross-Train", run_interval:"Intervals",
   };
 
   function splitMainSet(mainSet) {
@@ -2764,9 +2764,10 @@ WEEKGOALS_JSON
 }
 WEEKGOALS_JSON
 
-session_type must be one of: rest, run_threshold, run_easy, run_long, run_medium_long, run_marathon_pace, crossfit, run_interval.
+session_type must be one of: rest, run_threshold, run_easy, run_long, run_medium_long, run_marathon_pace, run_hills, crossfit, run_interval.
 - run_medium_long: mid-week run 15–20km at easy to marathon pace, builds endurance without full long-run recovery cost
 - run_marathon_pace: sustained running at goal race pace, 10–18km total, race-specificity for marathon training
+- run_hills: hill repeats session — 6–10×60–90s hard uphill efforts with jog-down recovery; builds eccentric quad strength and running economy
 Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.`;
 
     const r = await callClaude("You are an elite running coach AI. Output valid JSON only — no markdown, no prose.", prompt);
