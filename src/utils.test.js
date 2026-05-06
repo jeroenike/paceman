@@ -1023,6 +1023,153 @@ describe("buildCoachingRules", () => {
       const r = rules(42.195);
       expect(r.some(s => s.includes("run_marathon_pace"))).toBe(true);
     });
+
+    // Tuesday rotation
+    it("requires Tuesday intensity rotation in Build phase", () => {
+      const r = rules(42.195, "recreational", "130-145", buildPhase);
+      expect(r.some(s => s.includes("ROTATE") && s.toLowerCase().includes("tuesday"))).toBe(true);
+    });
+
+    it("Tuesday rotation includes VO2max, threshold, and marathon pace options", () => {
+      const r = rules(42.195, "recreational", "130-145", buildPhase);
+      const rotRule = r.find(s => s.toLowerCase().includes("tuesday") && s.includes("ROTATE"));
+      expect(rotRule).toBeDefined();
+      expect(rotRule).toMatch(/VO2max|interval/i);
+      expect(rotRule).toMatch(/[Tt]hreshold/);
+      expect(rotRule).toMatch(/[Mm]arathon pace/);
+    });
+
+    it("Tuesday rotation does NOT appear in Base phase", () => {
+      const r = rules(42.195, "recreational", "130-145", basePhase);
+      expect(r.some(s => s.toLowerCase().includes("tuesday") && s.includes("ROTATE"))).toBe(false);
+    });
+
+    it("Tuesday rotation does NOT appear in Taper phase", () => {
+      const r = rules(42.195, "recreational", "130-145", taperPhase);
+      expect(r.some(s => s.toLowerCase().includes("tuesday") && s.includes("ROTATE"))).toBe(false);
+    });
+
+    // Thursday structure
+    it("requires structured Thursday medium-long run in Build phase", () => {
+      const r = rules(42.195, "recreational", "130-145", buildPhase);
+      expect(r.some(s => s.toLowerCase().includes("thursday") && s.toLowerCase().includes("structure"))).toBe(true);
+    });
+
+    it("Thursday rule explicitly rejects all-easy runs for performance goal", () => {
+      const r = rules(42.195, "recreational", "130-145", buildPhase);
+      const thuRule = r.find(s => s.toLowerCase().includes("thursday"));
+      expect(thuRule).toBeDefined();
+      expect(thuRule.toLowerCase()).toMatch(/wasted|performance/);
+    });
+
+    it("Thursday structure rule does NOT appear in Base phase", () => {
+      const r = rules(42.195, "recreational", "130-145", basePhase);
+      expect(r.some(s => s.toLowerCase().includes("thursday"))).toBe(false);
+    });
+
+    // Long run MP progression
+    it("requires MP segments to progress across build weeks", () => {
+      const r = rules(42.195, "recreational", "130-145", buildPhase);
+      expect(r.some(s => s.toLowerCase().includes("progress") && s.includes("MP"))).toBe(true);
+    });
+
+    it("MP progression targets 12–14km by late Build/Peak", () => {
+      const r = rules(42.195, "recreational", "130-145", buildPhase);
+      const progRule = r.find(s => s.includes("MP") && s.toLowerCase().includes("progress"));
+      expect(progRule).toBeDefined();
+      expect(progRule).toContain("12–14km");
+    });
+
+    it("MP progression rule does NOT appear in Base phase", () => {
+      const r = rules(42.195, "recreational", "130-145", basePhase);
+      expect(r.some(s => s.includes("MP") && s.toLowerCase().includes("progress"))).toBe(false);
+    });
+
+    // Peak long run distance
+    it("peak long run must reach 30–32km (Peak phase only)", () => {
+      const peakPhase = { key: "peak" };
+      const r = rules(42.195, "recreational", "130-145", peakPhase);
+      expect(r.some(s => s.includes("30–32km"))).toBe(true);
+    });
+
+    it("peak long run rule does NOT appear in Build phase", () => {
+      const r = rules(42.195, "recreational", "130-145", buildPhase);
+      expect(r.some(s => s.includes("30–32km"))).toBe(false);
+    });
+
+    it("peak long run rule rejects 24km as performance target", () => {
+      const peakPhase = { key: "peak" };
+      const r = rules(42.195, "recreational", "130-145", peakPhase);
+      const peakRule = r.find(s => s.includes("30–32km"));
+      expect(peakRule).toBeDefined();
+      expect(peakRule.toLowerCase()).toMatch(/24km|completion only|performance/);
+    });
+
+    // Hill work
+    it("includes hill work sessions in Build phase", () => {
+      const r = rules(42.195, "recreational", "130-145", buildPhase);
+      expect(r.some(s => s.toLowerCase().includes("hill"))).toBe(true);
+    });
+
+    it("hill sessions are every 2 weeks with uphill efforts", () => {
+      const r = rules(42.195, "recreational", "130-145", buildPhase);
+      const hillRule = r.find(s => s.toLowerCase().includes("hill"));
+      expect(hillRule).toBeDefined();
+      expect(hillRule).toMatch(/2 weeks|uphill/i);
+    });
+
+    it("hill work does NOT appear in Base phase", () => {
+      const r = rules(42.195, "recreational", "130-145", basePhase);
+      expect(r.some(s => s.toLowerCase().includes("hill") && s.toLowerCase().includes("uphill"))).toBe(false);
+    });
+
+    // CrossFit placement
+    it("CrossFit must be Monday only, never Friday", () => {
+      const r = rules(42.195);
+      const cfRule = r.find(s => s.toLowerCase().includes("crossfit") && s.toLowerCase().includes("monday"));
+      expect(cfRule).toBeDefined();
+      expect(cfRule.toLowerCase()).toContain("never friday");
+    });
+
+    it("CrossFit rule warns against heavy lower-body work in peak", () => {
+      const r = rules(42.195);
+      const cfRule = r.find(s => s.toLowerCase().includes("crossfit") && s.toLowerCase().includes("monday"));
+      expect(cfRule).toBeDefined();
+      expect(cfRule.toLowerCase()).toMatch(/squat|deadlift|lower-body/);
+    });
+
+    it("CrossFit placement rule applies in Base phase too", () => {
+      const r = rules(42.195, "recreational", "130-145", basePhase);
+      expect(r.some(s => s.toLowerCase().includes("crossfit") && s.toLowerCase().includes("monday"))).toBe(true);
+    });
+
+    // Fueling practice
+    it("includes fueling practice rule in Build phase", () => {
+      const r = rules(42.195, "recreational", "130-145", buildPhase);
+      expect(r.some(s => s.toLowerCase().includes("fuel") || s.toLowerCase().includes("gel"))).toBe(true);
+    });
+
+    it("fueling rule specifies ≥18km long runs and gel timing", () => {
+      const r = rules(42.195, "recreational", "130-145", buildPhase);
+      const fuelRule = r.find(s => s.toLowerCase().includes("gel"));
+      expect(fuelRule).toBeDefined();
+      expect(fuelRule).toMatch(/18km|45 min/);
+    });
+
+    it("fueling practice rule appears in Taper phase", () => {
+      const r = rules(42.195, "recreational", "130-145", taperPhase);
+      expect(r.some(s => s.toLowerCase().includes("gel"))).toBe(true);
+    });
+
+    it("fueling practice rule does NOT appear in Base phase (no long runs ≥18km)", () => {
+      const r = rules(42.195, "recreational", "130-145", basePhase);
+      expect(r.some(s => s.toLowerCase().includes("gel"))).toBe(false);
+    });
+
+    it("fueling rule is absent for half marathon (shorter race)", () => {
+      const r = rules(21.0975, "recreational", "130-145", buildPhase);
+      expect(r.some(s => s.toLowerCase().includes("gel"))).toBe(false);
+    });
   });
 
   // Non-marathon keeps 30–40% long run rule
