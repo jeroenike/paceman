@@ -1926,8 +1926,28 @@ describe("applyPhaseSchedule", () => {
     expect(applyPhaseSchedule(sched, "build")).toEqual(sched);
   });
 
-  it("returns the schedule unchanged for base phase", () => {
-    expect(applyPhaseSchedule(sched, "base")).toEqual(sched);
+  it("base: downgrades threshold and MP to easy", () => {
+    const out = applyPhaseSchedule(sched, "base");
+    expect(out.Tue).toBe("run_easy");
+    expect(out.Thu).toBe("run_easy");
+  });
+
+  it("base: downgrades intervals to easy", () => {
+    const out = applyPhaseSchedule({ ...sched, Tue: "run_interval" }, "base");
+    expect(out.Tue).toBe("run_easy");
+  });
+
+  it("base: KEEPS hills (light hill work allowed in base)", () => {
+    const out = applyPhaseSchedule({ ...sched, Wed: "run_hills" }, "base");
+    expect(out.Wed).toBe("run_hills");
+  });
+
+  it("base: preserves rest days, the long run day, and easy days", () => {
+    const out = applyPhaseSchedule(sched, "base");
+    expect(out.Mon).toBe("rest");
+    expect(out.Fri).toBe("rest");
+    expect(out.Sat).toBe("run_easy");
+    expect(out.Sun).toBe("run_long");
   });
 
   it("recovery: downgrades threshold and MP to easy", () => {

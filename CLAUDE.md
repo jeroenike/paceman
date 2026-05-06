@@ -48,6 +48,19 @@ with a unit test — do not rely on layer 3 alone.
 - The user's day pattern (which days are run vs rest vs cross) is preserved.
   Only intensity is downgraded.
 
+### I-2a. Base weeks are aerobic-only
+- During the BASE phase (the first ~third of the block), quality work is
+  banned — only easy runs, light hill work, and rest are allowed.
+- `applyPhaseSchedule` downgrades `run_threshold`, `run_marathon_pace`, and
+  `run_interval` from the user's profile schedule to `run_easy` at prompt
+  time. Hills are NOT downgraded — light hill work is part of base
+  conditioning.
+- The downgrade is surfaced to the user via the "Phase downgrades applied"
+  line in the prompt and (where rendered) the schedule view, so a
+  profile-driven Tuesday Threshold visibly becomes "Tue: Threshold → Easy
+  (BASE)".
+- The user's profile schedule is never mutated.
+
 ### I-3. MP sessions run at exactly race pace
 - Every `run_marathon_pace` session and every MP segment inside a long run is
   prescribed at exactly `profile.racePace` (tight band ± 3 sec/km).
@@ -60,6 +73,16 @@ with a unit test — do not rely on layer 3 alone.
 - Both prompts inject `MANDATORY EASY PACE BAND: <min>–<max>/km, HR-capped at
   <easyHR>`. The band depends only on `racePace`, so it never drifts week to
   week.
+
+### I-4a. Long-run pace is pinned in build/peak/taper/recovery
+- `deriveLongRunPace(racePace)` returns a single pace at race pace × 1.075
+  (≈ +25 sec/km), which is faster than easy and slower than threshold.
+- `buildWeekPlanGoals` and `generateDayPlan` both inject a
+  `MANDATORY LONG RUN PACE` constraint pointing at this value for any
+  `run_long` session, with a follow-up that any MP segment inside the long
+  run is at exactly `racePace`.
+- BASE long runs are intentionally NOT pinned — early base long runs run at
+  easy pace with the last 3–5 km slightly faster, per the base coaching rule.
 
 ### I-5. Long-run distance is deterministic and progressive
 - `computeLongRunTarget(raceDist, experience, weekNumber, totalWeeks,

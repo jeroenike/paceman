@@ -13,7 +13,7 @@ import {
   isDayAfterRace, isDayRaceDay, isWeekInPast,
   secsToTime, computePlanDeltas, computeRaceProjection,
   normalizeInjuries, injuriesToText,
-  deriveEasyPace, computeLongRunTarget, applyPhaseSchedule,
+  deriveEasyPace, deriveLongRunPace, computeLongRunTarget, applyPhaseSchedule,
 } from "./utils.js";
 import { DEV_SEED, DEV_SEED_GREEN, DEV_SEED_ORANGE, DEV_SEED_RED } from "./dev-seed.js";
 
@@ -2759,13 +2759,20 @@ SCORE_JSON`);
       return `MANDATORY LONG RUN THIS WEEK: Sunday long run MUST be exactly ${longRunTarget.longRunKm} km${mpClause}. Set longRunDistance to ${longRunTarget.longRunKm}. Two consecutive non-recovery weeks must NOT share the same long-run distance.`;
     })();
 
-    // Pace pinning — derived once per week so MP and easy bands are consistent.
+    // Pace pinning — derived once per week so MP, easy, and long-run paces
+    // are consistent across the block.
     const easyBand = deriveEasyPace(p.racePace);
+    const longRunPace = deriveLongRunPace(p.racePace);
+    const pinLongRun = phase?.key === "build" || phase?.key === "peak"
+                    || phase?.key === "taper" || phase?.key === "recovery";
     const pacePinConstraint = isMarathon && p.racePace
       ? [
           `MANDATORY MP PACE: every run_marathon_pace session and every MP segment inside a long run MUST be prescribed at exactly ${p.racePace}/km (tight band ${p.racePace} ± 3 sec/km). Do NOT prescribe paces slower than ${p.racePace}/km for MP work.`,
           easyBand
             ? `MANDATORY EASY PACE BAND: every run_easy session MUST use the band ${easyBand.min}–${easyBand.max}/km (HR-capped at ${p.easyHR || "easy zone"} bpm). Do not vary this band week-to-week.`
+            : null,
+          longRunPace && pinLongRun
+            ? `MANDATORY LONG RUN PACE: for run_long sessions, the bulk MUST be at ${longRunPace}/km (long-run aerobic pace, faster than easy). Any MP segment inside the long run MUST be at exactly ${p.racePace}/km. Do NOT prescribe the entire long run at easy pace.`
             : null,
         ].filter(Boolean).join("\n")
       : null;
@@ -2881,6 +2888,7 @@ Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.
         ? `\nTODAY'S PAIN AREAS: ${dayInjuries.join(", ")} — modify the session to protect these areas. Avoid movements that load them directly; suggest alternatives where relevant.`
         : "";
       const easyBand = deriveEasyPace(p.racePace);
+      const longRunPace = deriveLongRunPace(p.racePace);
       const pacePin = [
         newType === "run_marathon_pace" && p.racePace
           ? `MANDATORY: prescribe at exactly ${p.racePace}/km (tight band ${p.racePace} ± 3 sec/km). Never slower than ${p.racePace}/km.`
@@ -2888,8 +2896,8 @@ Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.
         newType === "run_easy" && easyBand
           ? `MANDATORY: prescribe at ${easyBand.min}–${easyBand.max}/km, HR-capped at ${p.easyHR || "easy zone"} bpm.`
           : null,
-        newType === "run_long" && p.racePace
-          ? `Long-run pace at ${profileTrainingPaces(p).longRun}/km. Any MP segment in the long run MUST be at exactly ${p.racePace}/km.`
+        newType === "run_long" && longRunPace
+          ? `MANDATORY LONG RUN PACE: bulk at ${longRunPace}/km (long-run aerobic pace, faster than easy). Any MP segment in the long run MUST be at exactly ${p.racePace}/km. Do NOT prescribe the entire long run at easy pace.`
           : null,
       ].filter(Boolean).join("\n");
       const r = await callClaude(
