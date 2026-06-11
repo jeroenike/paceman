@@ -14,6 +14,10 @@ import {
   normalizeInjuries, injuriesToText,
   getTrainingPhase, getDistanceGuidance, buildCoachingRules, getAllCoachingRules,
   getDaySessionType, getRotationLabel, validateSchedule,
+  computeTrainingLoad, buildLoadConstraint, LOAD_ZONES,
+  buildInjuryConstraints, INJURY_GUIDANCE,
+  computeWeekCompletion, buildAdaptationConstraint,
+  computeWeekStreak, computeLongestWeekStreak, computeBadges, BADGE_DEFS,
 } from "./utils.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2032,5 +2036,277 @@ describe("buildCoachingRules — phase additions", () => {
   it("MP-pace pin is NOT applied for non-marathon distances", () => {
     const r = buildCoachingRules(21.0975, "recreational", "130-145", { key: "build" });
     expect(r.some(s => /exactly the athlete's goal race pace/i.test(s))).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// computeTrainingLoad — acute:chronic workload ratio (injury prevention)
+// ─────────────────────────────────────────────────────────────────────────────
+const TODAY = "2026-06-11"; // Thursday; current week starts 2026-06-08
+
+function dayShift(dateStr, delta) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + delta);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function run(daysAgo, km) {
+  return { type: "run_easy", date: dayShift(TODAY, -daysAgo), distance: String(km) };
+}
+
+describe("computeTrainingLoad", () => {
+  it("returns null with no sessions", () => {
+    expect(computeTrainingLoad([], TODAY)).toBeNull();
+  });
+
+  it("returns null with under 14 days of history", () => {
+    const sessions = [run(0, 10), run(3, 10), run(6, 10), run(10, 10)];
+    expect(computeTrainingLoad(sessions, TODAY)).toBeNull();
+  });
+
+  it("steady 30km/week → ratio 1.0, optimal zone", () => {
+    const sessions = [
+      run(0, 10), run(2, 10), run(5, 10),       // acute: 30
+      run(10, 15), run(12, 15),                 // 30
+      run(17, 30),                              // 30
+      run(24, 30),                              // 30
+      run(28, 30),                              // outside chronic window — sets history depth
+    ];
+    const load = computeTrainingLoad(sessions, TODAY);
+    expect(load.acuteKm).toBe(30);
+    expect(load.chronicWeeklyKm).toBe(30);
+    expect(load.ratio).toBe(1);
+    expect(load.zone).toBe("optimal");
+  });
+
+  it("acute spike to 2× baseline → high zone", () => {
+    const sessions = [
+      run(0, 25), run(3, 25),                   // acute: 50
+      run(10, 25), run(20, 25),                 // older 28-day load: 50
+      run(28, 20),                              // history depth marker
+    ];
+    const load = computeTrainingLoad(sessions, TODAY);
+    expect(load.ratio).toBe(2);
+    expect(load.zone).toBe("high");
+  });
+
+  it("no running this week with a solid baseline → low zone", () => {
+    const sessions = [run(8, 30), run(15, 30), run(22, 30), run(28, 30)];
+    const load = computeTrainingLoad(sessions, TODAY);
+    expect(load.acuteKm).toBe(0);
+    expect(load.zone).toBe("low");
+  });
+
+  it("ignores future-dated and non-run sessions", () => {
+    const sessions = [
+      run(0, 10), run(7, 10), run(14, 10), run(21, 10), run(28, 10),
+      { type: "crossfit", date: dayShift(TODAY, -1), distance: "50" },
+      { type: "run_easy", date: dayShift(TODAY, 3), distance: "50" },
+    ];
+    const load = computeTrainingLoad(sessions, TODAY);
+    expect(load.acuteKm).toBe(10);
+  });
+});
+
+describe("buildLoadConstraint", () => {
+  it("returns null for null load", () => expect(buildLoadConstraint(null)).toBeNull());
+  it("returns null for optimal and low zones", () => {
+    expect(buildLoadConstraint({ zone: "optimal", ratio: 1.0, acuteKm: 30, chronicWeeklyKm: 30 })).toBeNull();
+    expect(buildLoadConstraint({ zone: "low", ratio: 0.5, acuteKm: 15, chronicWeeklyKm: 30 })).toBeNull();
+  });
+  it("caution zone → hold-volume warning", () => {
+    const c = buildLoadConstraint({ zone: "caution", ratio: 1.4, acuteKm: 42, chronicWeeklyKm: 30 });
+    expect(c).toMatch(/Do NOT increase/);
+    expect(c).toContain("1.4");
+  });
+  it("high zone → mandatory volume cut", () => {
+    const c = buildLoadConstraint({ zone: "high", ratio: 1.8, acuteKm: 54, chronicWeeklyKm: 30 });
+    expect(c).toMatch(/MANDATORY LOAD CAP/);
+    expect(c).toMatch(/10–20% below/);
+  });
+  it("every zone has UI metadata", () => {
+    for (const z of ["low", "optimal", "caution", "high"]) {
+      expect(LOAD_ZONES[z].label).toBeTruthy();
+      expect(LOAD_ZONES[z].color).toBeTruthy();
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// buildInjuryConstraints
+// ─────────────────────────────────────────────────────────────────────────────
+describe("buildInjuryConstraints", () => {
+  it("returns [] for no injuries", () => {
+    expect(buildInjuryConstraints([])).toEqual([]);
+    expect(buildInjuryConstraints(["__none__"])).toEqual([]);
+    expect(buildInjuryConstraints(undefined)).toEqual([]);
+  });
+
+  it("Achilles bans hills and intervals", () => {
+    const [c] = buildInjuryConstraints([{ area: "Achilles", severity: 2 }]);
+    expect(c).toMatch(/MANDATORY INJURY PROTECTION — Achilles \(2\/5\)/);
+    expect(c).toContain("NO run_hills");
+    expect(c).toContain("NO run_interval");
+  });
+
+  it("severity ≥4 escalates to rest/cross-training", () => {
+    const [c] = buildInjuryConstraints([{ area: "Knee", severity: 4 }]);
+    expect(c).toMatch(/severe/);
+    expect(c).toMatch(/cross-training/);
+  });
+
+  it("handles legacy string[] injuries without severity", () => {
+    const [c] = buildInjuryConstraints(["Hamstring"]);
+    expect(c).toContain("Hamstring");
+    expect(c).toContain("NO run_interval");
+  });
+
+  it("every INJURY_GUIDANCE entry produces a constraint with a pain-stop rule", () => {
+    for (const area of Object.keys(INJURY_GUIDANCE)) {
+      const [c] = buildInjuryConstraints([{ area, severity: 2 }]);
+      expect(c).toMatch(/pain exceeds 3\/10/);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// computeWeekCompletion / buildAdaptationConstraint — adaptive replanning
+// ─────────────────────────────────────────────────────────────────────────────
+describe("computeWeekCompletion", () => {
+  const plan = {
+    weekStart: "2026-06-01",
+    weekGoals: {
+      totalDistance: 40,
+      daySessions: {
+        Mon: { type: "rest" }, Tue: { type: "run_threshold" }, Wed: { type: "run_easy" },
+        Thu: { type: "run_easy" }, Fri: { type: "rest" }, Sat: { type: "crossfit" },
+        Sun: { type: "run_long" },
+      },
+    },
+  };
+
+  it("returns null without weekGoals", () => {
+    expect(computeWeekCompletion([], { weekStart: "2026-06-01" })).toBeNull();
+    expect(computeWeekCompletion([], null)).toBeNull();
+  });
+
+  it("computes actual vs planned km and run counts", () => {
+    const sessions = [
+      { type: "run_easy", date: "2026-06-02", distance: "10" },
+      { type: "run_long", date: "2026-06-07", distance: "10" },
+      { type: "run_easy", date: "2026-06-09", distance: "99" }, // next week — excluded
+    ];
+    const c = computeWeekCompletion(sessions, plan);
+    expect(c.actualKm).toBe(20);
+    expect(c.plannedKm).toBe(40);
+    expect(c.pct).toBe(50);
+    expect(c.runsDone).toBe(2);
+    expect(c.runsPlanned).toBe(4);
+  });
+
+  it("pct is null when the plan has no volume target", () => {
+    const c = computeWeekCompletion([], { weekStart: "2026-06-01", weekGoals: { daySessions: {} } });
+    expect(c.pct).toBeNull();
+  });
+});
+
+describe("buildAdaptationConstraint", () => {
+  it("returns null for null/empty completion", () => {
+    expect(buildAdaptationConstraint(null)).toBeNull();
+    expect(buildAdaptationConstraint({ actualKm: 0, plannedKm: 40, pct: 0 })).toBeNull();
+  });
+
+  it("under 70% completed → mandatory repeat of the progression step", () => {
+    const c = buildAdaptationConstraint({ actualKm: 20, plannedKm: 40, pct: 50 });
+    expect(c).toMatch(/MANDATORY ADAPTATION/);
+    expect(c).toMatch(/Do NOT progress/);
+    expect(c).toContain("20");
+  });
+
+  it("70–89% completed → hold volume", () => {
+    const c = buildAdaptationConstraint({ actualKm: 32, plannedKm: 40, pct: 80 });
+    expect(c).toMatch(/Hold this week's total volume/);
+    expect(c).toMatch(/no increase/);
+  });
+
+  it("≥90% completed → no constraint (progress normally)", () => {
+    expect(buildAdaptationConstraint({ actualKm: 38, plannedKm: 40, pct: 95 })).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// computeWeekStreak / computeLongestWeekStreak / computeBadges — gamification
+// ─────────────────────────────────────────────────────────────────────────────
+describe("computeWeekStreak", () => {
+  it("returns 0 with no sessions", () => {
+    expect(computeWeekStreak([], TODAY)).toEqual({ weekStreak: 0, activeThisWeek: false });
+  });
+
+  it("counts consecutive weeks including the current one", () => {
+    const sessions = [run(1, 10), run(8, 10), run(15, 10)]; // this week + 2 prior
+    expect(computeWeekStreak(sessions, TODAY)).toEqual({ weekStreak: 3, activeThisWeek: true });
+  });
+
+  it("current week without a run does not break the streak yet", () => {
+    const sessions = [run(8, 10), run(15, 10)];
+    expect(computeWeekStreak(sessions, TODAY)).toEqual({ weekStreak: 2, activeThisWeek: false });
+  });
+
+  it("a missed week breaks the streak", () => {
+    const sessions = [run(1, 10), run(15, 10)]; // gap last week
+    expect(computeWeekStreak(sessions, TODAY)).toEqual({ weekStreak: 1, activeThisWeek: true });
+  });
+});
+
+describe("computeLongestWeekStreak", () => {
+  it("finds the longest historical streak across gaps", () => {
+    const sessions = [run(1, 10), run(22, 10), run(29, 10), run(36, 10)]; // 1-week + 3-week streaks
+    expect(computeLongestWeekStreak(sessions)).toBe(3);
+  });
+});
+
+describe("computeBadges", () => {
+  it("no sessions → nothing earned, zero progress", () => {
+    const badges = computeBadges([], [], TODAY);
+    expect(badges).toHaveLength(BADGE_DEFS.length);
+    expect(badges.every(b => !b.earned)).toBe(true);
+    expect(badges.find(b => b.id === "first_run").progress).toBe(0);
+  });
+
+  it("12 weekly runs incl. a 21km → run, km, long-run and streak badges", () => {
+    const sessions = Array.from({ length: 12 }, (_, i) => run(i * 7 + 1, i === 0 ? 21 : 10));
+    const byId = Object.fromEntries(computeBadges(sessions, [], TODAY).map(b => [b.id, b]));
+    expect(byId.first_run.earned).toBe(true);
+    expect(byId.runs_10.earned).toBe(true);
+    expect(byId.runs_50.earned).toBe(false);
+    expect(byId.km_100.earned).toBe(true);   // 131 km
+    expect(byId.long_20.earned).toBe(true);  // 21 km
+    expect(byId.long_30.earned).toBe(false);
+    expect(byId.streak_4.earned).toBe(true);
+    expect(byId.streak_12.earned).toBe(true);
+    expect(byId.runs_50.progress).toBeCloseTo(12 / 50);
+  });
+
+  it("a past planned week completed ≥90% earns Perfect Week", () => {
+    const weekPlans = [{
+      weekStart: "2026-06-01",
+      weekGoals: { totalDistance: 20, daySessions: { Tue: { type: "run_easy" }, Sun: { type: "run_long" } } },
+    }];
+    const sessions = [
+      { type: "run_easy", date: "2026-06-02", distance: "10" },
+      { type: "run_long", date: "2026-06-07", distance: "10" },
+    ];
+    const badge = computeBadges(sessions, weekPlans, TODAY).find(b => b.id === "plan_week");
+    expect(badge.earned).toBe(true);
+  });
+
+  it("the current in-progress week never counts for Perfect Week", () => {
+    const weekPlans = [{
+      weekStart: "2026-06-08",
+      weekGoals: { totalDistance: 10, daySessions: { Tue: { type: "run_easy" } } },
+    }];
+    const sessions = [{ type: "run_easy", date: "2026-06-09", distance: "10" }];
+    const badge = computeBadges(sessions, weekPlans, TODAY).find(b => b.id === "plan_week");
+    expect(badge.earned).toBe(false);
   });
 });
