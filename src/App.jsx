@@ -2628,10 +2628,15 @@ export default function App({ session }) {
   const [migrated, setMigrated] = useState(false);
   const dbWriteTimer = useRef(null);
 
-  // Phase 2: load from DB on mount; DB is authoritative when a row exists
+  // Phase 2: load from DB on mount; DB is authoritative when a row exists.
+  // Raced against an 8s timeout so a hung request can never strand the user
+  // on the boot spinner — on timeout the app renders from localStorage.
   useEffect(() => {
     if (!session?.user?.id) { setDbLoaded(true); return; }
-    loadUserData(session.user.id).then(dbData => {
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("DB load timed out")), 8000)
+    );
+    Promise.race([loadUserData(session.user.id), timeout]).then(dbData => {
       if (dbData) {
         // DB row exists — merge with defaults and use as the store
         const merged = { profile:defaultProfile, sessions:[], weekPlans:[], strava:null, weekScheduleOverrides:{}, ...dbData };
