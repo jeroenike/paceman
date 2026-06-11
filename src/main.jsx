@@ -10,15 +10,26 @@ function Root() {
 
   useEffect(() => {
     if (!supabaseConfigured) return;
+    // getSession() can hang indefinitely (iOS standalone/PWA LockManager
+    // deadlock, dropped connections) — never leave the user on the boot
+    // spinner. After 6s fall through to signed-out; onAuthStateChange still
+    // upgrades to the real session if it arrives later.
+    let settled = false;
+    const timer = setTimeout(() => { if (!settled) setSession(false); }, 6000);
     // Get session on first load
     supabase.auth.getSession().then(({ data: { session } }) => {
+      settled = true; clearTimeout(timer);
       setSession(session ?? false);
+    }).catch(() => {
+      settled = true; clearTimeout(timer);
+      setSession(false);
     });
     // Keep session updated (handles token refresh, sign-out from other tab, etc.)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      settled = true; clearTimeout(timer);
       setSession(session ?? false);
     });
-    return () => subscription.unsubscribe();
+    return () => { clearTimeout(timer); subscription.unsubscribe(); };
   }, []);
 
   if (session === null) {

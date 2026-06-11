@@ -832,6 +832,236 @@ export function validateSchedule(schedule, scheduleRotations, raceDist) {
   return results;
 }
 
+// ── Training load monitoring (injury prevention) ─────────────────────────────
+
+function fmtYMD(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function shiftDateStr(dateStr, days) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return fmtYMD(d);
+}
+
+export const LOAD_ZONES = {
+  low:     { label:"Low load",  color:"#888780", description:"Training load is below your recent baseline. Safe to follow the plan — consistency rebuilds fitness." },
+  optimal: { label:"Optimal",   color:"#0F6E56", description:"Load is in the adaptation sweet spot (0.8–1.3). Keep progressing as planned." },
+  caution: { label:"Elevated",  color:"#b07000", description:"Load is ramping faster than your body is adapted to. Hold volume — no increases this week." },
+  high:    { label:"High risk", color:"#c00000", description:"Acute load far exceeds your chronic baseline — injury risk zone. Cut volume 10–20% and drop a quality session." },
+};
+
+/**
+ * Acute:Chronic Workload Ratio (ACWR) from logged run sessions.
+ *   acuteKm         — run km in the last 7 days (today inclusive)
+ *   chronicWeeklyKm — average weekly run km over the last 28 days
+ *   ratio zones: <0.8 low · 0.8–1.3 optimal · 1.3–1.5 caution · >1.5 high
+ * Returns null with under 14 days of history or a near-zero chronic baseline,
+ * where the ratio is statistically meaningless.
+ */
+export function computeTrainingLoad(sessions, todayStr) {
+  if (!todayStr) return null;
+  const runs = (sessions || []).filter(s =>
+    s.type?.startsWith("run") && parseFloat(s.distance || "") > 0 &&
+    s.date && s.date <= todayStr
+  );
+  if (!runs.length) return null;
+
+  const dayMs = 24 * 60 * 60 * 1000;
+  const today = new Date(todayStr + "T00:00:00");
+  const daysAgo = dateStr => Math.floor((today - new Date(dateStr + "T00:00:00")) / dayMs);
+
+  const oldest = Math.max(...runs.map(s => daysAgo(s.date)));
+  if (oldest < 14) return null;
+
+  let acuteKm = 0, chronicKm = 0;
+  for (const s of runs) {
+    const d = daysAgo(s.date);
+    if (d >= 28) continue;
+    const km = parseFloat(s.distance);
+    chronicKm += km;
+    if (d < 7) acuteKm += km;
+  }
+  const chronicWindowDays = Math.min(28, oldest + 1);
+  const chronicWeeklyKm = chronicKm / (chronicWindowDays / 7);
+  if (chronicWeeklyKm < 5) return null;
+
+  const ratio = acuteKm / chronicWeeklyKm;
+  const zone = ratio < 0.8 ? "low" : ratio <= 1.3 ? "optimal" : ratio <= 1.5 ? "caution" : "high";
+  return {
+    acuteKm: +acuteKm.toFixed(1),
+    chronicWeeklyKm: +chronicWeeklyKm.toFixed(1),
+    ratio: +ratio.toFixed(2),
+    zone,
+  };
+}
+
+/**
+ * Deterministic prompt constraint from the current training load.
+ * Only caution/high zones produce a constraint — optimal/low follow the plan.
+ */
+export function buildLoadConstraint(load) {
+  if (!load) return null;
+  if (load.zone === "caution") {
+    return `TRAINING LOAD WARNING: acute:chronic workload ratio is ${load.ratio} (last 7 days ${load.acuteKm} km vs ${load.chronicWeeklyKm} km/week baseline). Do NOT increase total weekly volume — hold it at or slightly below ${load.acuteKm} km this week.`;
+  }
+  if (load.zone === "high") {
+    return `MANDATORY LOAD CAP: acute:chronic workload ratio is ${load.ratio} — injury danger zone (>1.5). This week's total volume MUST be 10–20% below the last 7 days (${load.acuteKm} km) and contain at most 1 quality session.`;
+  }
+  return null;
+}
+
+// ── Injury-aware session modifications ────────────────────────────────────────
+
+/** Per-area session bans and modifications, keyed by INJURY_AREAS labels. */
+export const INJURY_GUIDANCE = {
+  "Achilles":       { ban:["run_hills","run_interval"], note:"flat routes only; skip strides on tired calves — hill drive and fast intervals peak Achilles load" },
+  "Knee":           { ban:["run_hills"],                note:"no downhill running; prefer soft, flat surfaces; shorten the long run if pain persists past 24h" },
+  "Shin":           { ban:["run_interval"],             note:"no speed work on hard surfaces; run on grass or trail where possible; stop if shin pain worsens mid-run" },
+  "IT band":        { ban:["run_hills"],                note:"avoid downhills and cambered road edges; reduce long-run distance ~20%" },
+  "Hip flexor":     { ban:["run_interval","run_hills"], note:"no sprinting or hill drive; keep cadence comfortable, avoid forced knee lift" },
+  "Plantar fascia": { ban:["run_interval","run_hills"], note:"no speed work or strides; soft surfaces; avoid pushing off aggressively" },
+  "Calf":           { ban:["run_hills","run_interval"], note:"flat easy running only until pain-free — hills, intervals and strides all peak calf load" },
+  "Hamstring":      { ban:["run_interval"],             note:"no sprinting, strides or fast intervals; avoid overstriding, especially downhill" },
+};
+
+/**
+ * Deterministic injury-protection constraint strings for the AI prompts.
+ * Severity ≥ 4/5 escalates to replacing quality work with rest/cross-training.
+ */
+export function buildInjuryConstraints(injuries) {
+  return normalizeInjuries(injuries).map(({ area, severity }) => {
+    const g = INJURY_GUIDANCE[area];
+    const sev = severity ? ` (${severity}/5)` : "";
+    if (severity >= 4) {
+      return `MANDATORY INJURY PROTECTION — ${area}${sev}: severe. Replace quality sessions with rest or low-impact cross-training (bike, swim, elliptical). Easy running only if completely pain-free. ${g ? g.note : "Avoid anything that loads the area"}.`;
+    }
+    const bans = g?.ban?.length ? `NO ${g.ban.join(", NO ")}; ` : "";
+    const note = g ? g.note : "modify sessions to avoid loading the area";
+    return `MANDATORY INJURY PROTECTION — ${area}${sev}: ${bans}${note}. Stop any session if pain exceeds 3/10 or alters running form.`;
+  });
+}
+
+// ── Adaptive replanning ───────────────────────────────────────────────────────
+
+/**
+ * Compare logged runs against a week plan.
+ * Returns { actualKm, plannedKm, runsDone, runsPlanned, pct } or null when the
+ * plan has no goals. pct is null when the plan has no volume target.
+ */
+export function computeWeekCompletion(sessions, weekPlan) {
+  if (!weekPlan?.weekGoals || !weekPlan.weekStart) return null;
+  const runs = weekRunSessions(sessions, weekPlan.weekStart);
+  const actualKm = +runs.reduce((sum, s) => sum + (parseFloat(s.distance) || 0), 0).toFixed(1);
+  const plannedKm = Number(weekPlan.weekGoals.totalDistance) || 0;
+  return {
+    actualKm,
+    plannedKm,
+    runsDone: runs.length,
+    runsPlanned: countRunsPlanned(weekPlan.weekGoals.daySessions),
+    pct: plannedKm > 0 ? Math.round((actualKm / plannedKm) * 100) : null,
+  };
+}
+
+/**
+ * Deterministic adaptation constraint for next week's prompt, based on how
+ * much of the previous planned week was actually completed.
+ *   < 70% completed → repeat the progression step at the completed volume
+ *   70–89%          → hold volume, no increase
+ *   ≥ 90% or no data (0 km logged — likely not syncing) → no constraint
+ */
+export function buildAdaptationConstraint(completion) {
+  if (!completion || completion.pct === null || completion.actualKm === 0) return null;
+  if (completion.pct < 70) {
+    return `MANDATORY ADAPTATION: only ${completion.pct}% of last week's planned volume was completed (${completion.actualKm} of ${completion.plannedKm} km). Do NOT progress the load — set this week's total volume within ±10% of ${completion.actualKm} km and repeat last week's progression step. Never jump volume to "catch up" on missed kilometres.`;
+  }
+  if (completion.pct < 90) {
+    return `ADAPTATION: last week was ${completion.pct}% completed (${completion.actualKm} of ${completion.plannedKm} km). Hold this week's total volume at last week's planned level (${completion.plannedKm} km) — no increase.`;
+  }
+  return null;
+}
+
+// ── Gamification ──────────────────────────────────────────────────────────────
+
+/**
+ * Consecutive calendar weeks (Mon–Sun) with at least one logged run, counting
+ * backwards from the current week. The current week does not break the streak
+ * while it is still in progress — it only extends it once a run is logged.
+ */
+export function computeWeekStreak(sessions, todayStr) {
+  const runWeeks = new Set(
+    (sessions || [])
+      .filter(s => s.type?.startsWith("run") && s.date && parseFloat(s.distance || "") > 0)
+      .map(s => getWeekStart(s.date))
+  );
+  const currentWS = getWeekStart(todayStr ? new Date(todayStr + "T00:00:00") : new Date());
+  const activeThisWeek = runWeeks.has(currentWS);
+  let streak = 0;
+  let ws = activeThisWeek ? currentWS : shiftDateStr(currentWS, -7);
+  while (runWeeks.has(ws)) { streak++; ws = shiftDateStr(ws, -7); }
+  return { weekStreak: streak, activeThisWeek };
+}
+
+/** Longest run streak (consecutive weeks with ≥1 run) anywhere in history. */
+export function computeLongestWeekStreak(sessions) {
+  const weeks = [...new Set(
+    (sessions || [])
+      .filter(s => s.type?.startsWith("run") && s.date && parseFloat(s.distance || "") > 0)
+      .map(s => getWeekStart(s.date))
+  )].sort();
+  let longest = 0, cur = 0, prev = null;
+  for (const ws of weeks) {
+    cur = prev && shiftDateStr(prev, 7) === ws ? cur + 1 : 1;
+    if (cur > longest) longest = cur;
+    prev = ws;
+  }
+  return longest;
+}
+
+export const BADGE_DEFS = [
+  { id:"first_run", emoji:"👟", label:"First Run",      target:1,    metric:"runs",         unit:"run" },
+  { id:"runs_10",   emoji:"🏃", label:"10 Runs",        target:10,   metric:"runs",         unit:"runs" },
+  { id:"runs_50",   emoji:"💪", label:"50 Runs",        target:50,   metric:"runs",         unit:"runs" },
+  { id:"runs_100",  emoji:"🏅", label:"100 Runs",       target:100,  metric:"runs",         unit:"runs" },
+  { id:"km_100",    emoji:"🛣️", label:"100 km Total",   target:100,  metric:"km",           unit:"km" },
+  { id:"km_500",    emoji:"🗺️", label:"500 km Total",   target:500,  metric:"km",           unit:"km" },
+  { id:"km_1000",   emoji:"🌍", label:"1,000 km Total", target:1000, metric:"km",           unit:"km" },
+  { id:"long_20",   emoji:"⛰️", label:"20 km Long Run", target:20,   metric:"longest",      unit:"km" },
+  { id:"long_30",   emoji:"🏔️", label:"30 km Long Run", target:30,   metric:"longest",      unit:"km" },
+  { id:"streak_4",  emoji:"🔥", label:"4-Week Streak",  target:4,    metric:"streak",       unit:"weeks" },
+  { id:"streak_12", emoji:"☄️", label:"12-Week Streak", target:12,   metric:"streak",       unit:"weeks" },
+  { id:"plan_week", emoji:"🎯", label:"Perfect Week",   target:1,    metric:"perfectWeeks", unit:"week ≥90% of plan" },
+];
+
+/**
+ * Evaluate all badges against logged sessions and (for plan-adherence badges)
+ * past week plans. Streak badges use the longest streak ever, so an earned
+ * badge can never be lost. Returns BADGE_DEFS annotated with
+ * { earned, value, progress (0–1) }.
+ */
+export function computeBadges(sessions, weekPlans, todayStr) {
+  const runs = (sessions || []).filter(s => s.type?.startsWith("run") && parseFloat(s.distance || "") > 0);
+  const totalKm = runs.reduce((a, s) => a + parseFloat(s.distance), 0);
+  const longest = runs.reduce((a, s) => Math.max(a, parseFloat(s.distance)), 0);
+  const currentWS = getWeekStart(todayStr ? new Date(todayStr + "T00:00:00") : new Date());
+  const perfectWeeks = (weekPlans || [])
+    .filter(p => p.weekStart < currentWS)
+    .map(p => computeWeekCompletion(sessions, p))
+    .filter(c => c && c.pct !== null && c.pct >= 90)
+    .length;
+  const metrics = {
+    runs: runs.length,
+    km: totalKm,
+    longest,
+    streak: computeLongestWeekStreak(sessions),
+    perfectWeeks,
+  };
+  return BADGE_DEFS.map(b => {
+    const value = metrics[b.metric] || 0;
+    return { ...b, value, earned: value >= b.target, progress: Math.min(1, value / b.target) };
+  });
+}
+
 export function getAllCoachingRules(raceDist, experience, easyHR) {
   const phaseKeys = ["base", "build", "peak", "taper"];
   const rulePhases = new Map();

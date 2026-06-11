@@ -117,6 +117,28 @@ with a unit test — do not rely on layer 3 alone.
 - One-line previous-week summaries in the prompt are too thin a signal for
   multi-week consistency. Add a JS-side computation instead.
 
+### I-9. The plan adapts to actual training, never blindly progresses
+- `computeTrainingLoad(sessions, today)` computes the acute:chronic workload
+  ratio (7-day km vs 28-day weekly average). Zones: <0.8 low, 0.8–1.3
+  optimal, 1.3–1.5 caution, >1.5 high. Returns null with under 14 days of
+  history or a <5 km/week chronic baseline.
+- `buildLoadConstraint` injects a hold-volume warning (caution) or a
+  mandatory 10–20% volume cut (high) into `buildWeekPlanGoals`.
+- `computeWeekCompletion(sessions, prevWeekPlan)` + `buildAdaptationConstraint`
+  enforce: <70% of last week completed → repeat the progression step at the
+  completed volume; 70–89% → hold volume; never "catch up" missed km.
+- Both constraints apply only when generating the **current** week (real
+  logged data exists) and never in taper/race, where volume drops by design.
+
+### I-10. Injuries deterministically restrict session types
+- `INJURY_GUIDANCE` maps each injury area to banned session types and
+  concrete modifications (e.g. Achilles → no `run_hills`, no `run_interval`).
+- `buildInjuryConstraints(profile.injuries)` produces `MANDATORY INJURY
+  PROTECTION` strings; severity ≥ 4/5 escalates to replacing quality work
+  with rest or low-impact cross-training.
+- Injected into BOTH `buildWeekPlanGoals` and `generateDayPlan`, on top of
+  the per-day pain areas the user can log from the week view.
+
 ## When to add a new invariant
 
 Add a new section to this file when:
@@ -144,3 +166,8 @@ generator. The test suite includes:
 - `deriveEasyPace`, `deriveThresholdPace`, `deriveLongRunPace` — pace
   derivations
 - `validateSchedule` — schedule rotation rules
+- `computeTrainingLoad`, `buildLoadConstraint` — ACWR zones and load caps
+- `buildInjuryConstraints` — per-area session bans and severity escalation
+- `computeWeekCompletion`, `buildAdaptationConstraint` — adaptive replanning
+- `computeWeekStreak`, `computeLongestWeekStreak`, `computeBadges` —
+  gamification (streaks must never retro-revoke an earned badge)

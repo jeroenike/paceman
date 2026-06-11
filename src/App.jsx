@@ -14,6 +14,9 @@ import {
   secsToTime, computePlanDeltas, computeRaceProjection,
   normalizeInjuries, injuriesToText,
   deriveEasyPace, deriveLongRunPace, computeLongRunTarget, applyPhaseSchedule,
+  computeTrainingLoad, buildLoadConstraint, LOAD_ZONES,
+  buildInjuryConstraints, computeWeekCompletion, buildAdaptationConstraint,
+  computeWeekStreak, computeBadges,
 } from "./utils.js";
 import { DEV_SEED, DEV_SEED_GREEN, DEV_SEED_ORANGE, DEV_SEED_RED } from "./dev-seed.js";
 
@@ -214,6 +217,11 @@ function LogForm({ initial, onSave, onCancel, stravaActivities, onImportStrava, 
           style={{ width:"100%",padding:13,borderRadius:10,background:stravaLoading?"#eee":"#FC4C02",color:stravaLoading?"#aaa":"white",border:"none",fontSize:14,fontWeight:700,cursor:stravaLoading?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8 }}>
           <span>⚡</span>{stravaLoading?"Loading Strava...":"Import from Strava"}
         </button>
+      )}
+      {onImportStrava&&(
+        <div style={{ fontSize:11,color:"#aaa",textAlign:"center",marginTop:-4 }}>
+          New runs also sync automatically when the app opens. Garmin runs arrive via Garmin Connect → Strava auto-upload.
+        </div>
       )}
 
       {stravaActivities&&stravaActivities.length>0&&(
@@ -780,6 +788,46 @@ function CoachingRulesModal({ profile, onClose }) {
 
 // ── Home Screen ──
 
+/* Gamification + training-load strip: week streak, badge count, ACWR gauge */
+function StatsStrip({ sessions, weekPlans }) {
+  const todayStr = new Date().toISOString().split("T")[0];
+  const load = computeTrainingLoad(sessions, todayStr);
+  const { weekStreak, activeThisWeek } = computeWeekStreak(sessions, todayStr);
+  const badges = computeBadges(sessions, weekPlans, todayStr);
+  const earned = badges.filter(b => b.earned).length;
+  if (!load && !weekStreak && !earned) return null;
+  const zone = load ? LOAD_ZONES[load.zone] : null;
+  const tile = { flex:1,padding:"10px 8px",borderRadius:10,background:"#fafaf8",border:"1px solid #f0f0ec",textAlign:"center" };
+  return (
+    <div style={{ marginBottom:12 }}>
+      <div style={{ display:"flex",gap:8 }}>
+        <div style={tile}>
+          <div style={{ fontSize:16,lineHeight:1 }}>🔥</div>
+          <div style={{ fontSize:16,fontWeight:800,color:weekStreak?"#1a1a1a":"#bbb",marginTop:3 }}>{weekStreak}</div>
+          <div style={{ fontSize:10,color:"#aaa" }}>week streak{weekStreak>0&&!activeThisWeek?" · run to keep it":""}</div>
+        </div>
+        <div style={tile}>
+          <div style={{ fontSize:16,lineHeight:1 }}>🏅</div>
+          <div style={{ fontSize:16,fontWeight:800,color:earned?"#1a1a1a":"#bbb",marginTop:3 }}>{earned}<span style={{ fontSize:11,fontWeight:600,color:"#bbb" }}>/{badges.length}</span></div>
+          <div style={{ fontSize:10,color:"#aaa" }}>badges</div>
+        </div>
+        {zone&&(
+          <div style={{ ...tile,border:`1px solid ${zone.color}33`,background:zone.color+"0d" }}>
+            <div style={{ fontSize:16,lineHeight:1 }}>{load.zone==="optimal"?"✅":load.zone==="low"?"😴":"⚠️"}</div>
+            <div style={{ fontSize:16,fontWeight:800,color:zone.color,marginTop:3 }}>{load.ratio}</div>
+            <div style={{ fontSize:10,color:zone.color,fontWeight:600 }}>{zone.label}</div>
+          </div>
+        )}
+      </div>
+      {zone&&(load.zone==="caution"||load.zone==="high")&&(
+        <div style={{ marginTop:8,padding:"8px 12px",borderRadius:8,background:zone.color+"12",borderLeft:`3px solid ${zone.color}`,fontSize:12,color:zone.color }}>
+          <span style={{ fontWeight:700 }}>Load ratio {load.ratio}</span> — {zone.description}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGeneratePlan, onGoProfile, onSaveScheduleOverride, onSaveSession, onSetDayIntensity, onSetDayInjury }) {
   const [activeWeekStart, setActiveWeekStart] = useState(getCurrentWeekStart);
   const [scheduleEdit, setScheduleEdit] = useState(false);
@@ -910,6 +958,9 @@ function HomeScreen({ store, today, loading, loadingMsg, error, hasProfile, onGe
           );
         })()}
       </div>
+
+      {/* Streak / badges / training load */}
+      <StatsStrip sessions={store.sessions} weekPlans={store.weekPlans}/>
 
       {/* Week strip */}
       <WeekStrip weekPlans={store.weekPlans} sessions={store.sessions} activeWeekStart={activeWeekStart} onSelect={setActiveWeekStart} raceDate={store.profile.goalDate} trainingStartDate={store.profile.trainingStartDate}/>
@@ -1746,6 +1797,44 @@ function ProgressScreen({ store }) {
     setActiveMetrics(prev=>prev.includes(id)?prev.filter(m=>m!==id):[...prev,id]);
   }
 
+  // ── Achievements Card ──
+  function Achievements() {
+    const todayStr = new Date().toISOString().split("T")[0];
+    const badges = computeBadges(store.sessions, store.weekPlans, todayStr);
+    const { weekStreak, activeThisWeek } = computeWeekStreak(store.sessions, todayStr);
+    const earned = badges.filter(b => b.earned).length;
+    if (!runSessions.length) return null;
+    return (
+      <div style={{ padding:14,borderRadius:10,border:"1px solid #eee",background:"#fff",marginBottom:12 }}>
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12 }}>
+          <div style={{ fontSize:14,fontWeight:700,color:"#1a1a1a" }}>Achievements</div>
+          <div style={{ fontSize:12,color:"#888" }}>
+            {weekStreak>0&&<span style={{ marginRight:8 }}>🔥 {weekStreak}-week streak{!activeThisWeek?" (run this week to keep it)":""}</span>}
+            {earned}/{badges.length}
+          </div>
+        </div>
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:8 }}>
+          {badges.map(b=>(
+            <div key={b.id} style={{ padding:"10px 6px",borderRadius:10,textAlign:"center",
+              background:b.earned?"#fffbe8":"#fafaf8",border:`1px solid ${b.earned?"#f0d890":"#f0f0ec"}`,
+              opacity:b.earned?1:0.65 }}>
+              <div style={{ fontSize:20,filter:b.earned?"none":"grayscale(1)" }}>{b.emoji}</div>
+              <div style={{ fontSize:11,fontWeight:700,color:b.earned?"#8a6d00":"#999",marginTop:3,lineHeight:1.2 }}>{b.label}</div>
+              {!b.earned&&(
+                <div style={{ marginTop:5 }}>
+                  <div style={{ height:3,borderRadius:2,background:"#eee",overflow:"hidden" }}>
+                    <div style={{ height:"100%",borderRadius:2,background:"#c9b86a",width:`${Math.round(b.progress*100)}%` }}/>
+                  </div>
+                  <div style={{ fontSize:9,color:"#bbb",marginTop:2 }}>{Math.round(b.value*10)/10} / {b.target}</div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   // ── Goal Summary Card ──
   function GoalSummary() {
     return (
@@ -2055,6 +2144,8 @@ function ProgressScreen({ store }) {
           <div style={{ fontSize:13,color:"#aaa" }}>Log your first run to see progress metrics here.</div>
         </div>
       )}
+
+      <Achievements/>
 
       <WeekComparison/>
 
@@ -2537,10 +2628,15 @@ export default function App({ session }) {
   const [migrated, setMigrated] = useState(false);
   const dbWriteTimer = useRef(null);
 
-  // Phase 2: load from DB on mount; DB is authoritative when a row exists
+  // Phase 2: load from DB on mount; DB is authoritative when a row exists.
+  // Raced against an 8s timeout so a hung request can never strand the user
+  // on the boot spinner — on timeout the app renders from localStorage.
   useEffect(() => {
     if (!session?.user?.id) { setDbLoaded(true); return; }
-    loadUserData(session.user.id).then(dbData => {
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("DB load timed out")), 8000)
+    );
+    Promise.race([loadUserData(session.user.id), timeout]).then(dbData => {
       if (dbData) {
         // DB row exists — merge with defaults and use as the store
         const merged = { profile:defaultProfile, sessions:[], weekPlans:[], strava:null, weekScheduleOverrides:{}, ...dbData };
@@ -2576,6 +2672,47 @@ export default function App({ session }) {
       return next;
     });
   }, [session?.user?.id]);
+
+  // Seamless sync: when Strava is connected, pull new runs automatically on
+  // app open — no manual import needed. Garmin runs arrive through the
+  // Garmin Connect → Strava auto-upload, so a watch-recorded run appears here
+  // linked to its plan day and auto-scored.
+  const autoSyncRan = useRef(false);
+  const [syncedCount, setSyncedCount] = useState(0);
+  useEffect(() => {
+    if (!dbLoaded || autoSyncRan.current) return;
+    if (!store.strava?.refresh_token && !store.strava?.access_token) return;
+    autoSyncRan.current = true;
+    (async () => {
+      try {
+        const token = await getStravaToken();
+        const res = await fetch("/api/strava-activities?per_page=15", { headers:{ Authorization:`Bearer ${token}` } });
+        const data = await res.json();
+        if (!Array.isArray(data)) return;
+        const knownIds = new Set((store.sessions||[]).filter(s=>s.stravaId).map(s=>s.stravaId));
+        const fresh = data.filter(a => a.date && !knownIds.has(a.id)).map(a => {
+          let sess = {
+            id: Date.now()+Math.random(), type:a.type, date:a.date, time:"", location:"",
+            distance:a.distance||"", elevation:a.elevGain?.toString()||"",
+            avgPace:a.avgPace||"", avgHR:a.avgHR?.toString()||"",
+            maxHR:a.maxHR?.toString()||"", cadence:a.cadence?.toString()||"",
+            te:"", rpe:"", notes:a.name||"", stravaId:a.id, savedAt:new Date().toISOString(),
+          };
+          const link = getAutoLink(sess.date, store.weekPlans);
+          sess = link ? { ...sess, ...link } : { ...sess, plannedDay:null, plannedWeekStart:null };
+          if (sess.plannedWeekStart) {
+            const plan = (store.weekPlans||[]).find(p=>p.weekStart===sess.plannedWeekStart);
+            const score = computeAutoScore(sess, plan);
+            if (score) sess = { ...sess, score };
+          }
+          return sess;
+        });
+        if (!fresh.length) return;
+        persist({ sessions:[...(store.sessions||[]), ...fresh] });
+        setSyncedCount(fresh.length);
+      } catch { /* silent — manual import remains available on the Log screen */ }
+    })();
+  }, [dbLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasProfile = store.profile?.name && store.profile?.goal;
   const today = DAY_LABELS[new Date().getDay()===0?6:new Date().getDay()-1];
@@ -2777,6 +2914,19 @@ SCORE_JSON`);
         ].filter(Boolean).join("\n")
       : null;
 
+    // Adaptive + injury-prevention constraints — computed in JS (I-8 pattern)
+    // so they hold regardless of LLM behaviour. Load/adaptation only apply
+    // when generating the current week (real logged data exists), and never
+    // during taper/race where volume drops by design.
+    const todayStr = new Date().toISOString().split("T")[0];
+    const isCurrentWeek = weekStart === getCurrentWeekStart();
+    const volumeAdaptive = phase?.key !== "taper" && phase?.key !== "race";
+    const adaptiveConstraints = [
+      isCurrentWeek && volumeAdaptive ? buildLoadConstraint(computeTrainingLoad(store.sessions, todayStr)) : null,
+      isCurrentWeek && volumeAdaptive && prevWeekPlan ? buildAdaptationConstraint(computeWeekCompletion(store.sessions, prevWeekPlan)) : null,
+      ...buildInjuryConstraints(p.injuries),
+    ].filter(Boolean);
+
     // Phase-specific mandatory constraints injected above coaching rules so the AI cannot deprioritize them
     const phaseConstraints = (() => {
       if (!isMarathon) return [];
@@ -2816,7 +2966,7 @@ Athlete profile:
 
 Recent sessions:
 ${recentSessions||"No sessions logged yet"}
-${longRunConstraint ? `\n${longRunConstraint}\n` : ""}${pacePinConstraint ? `\n${pacePinConstraint}\n` : ""}${phaseConstraints.length ? `\n${phaseConstraints.join("\n")}\n` : ""}
+${longRunConstraint ? `\n${longRunConstraint}\n` : ""}${pacePinConstraint ? `\n${pacePinConstraint}\n` : ""}${adaptiveConstraints.length ? `\n${adaptiveConstraints.join("\n")}\n` : ""}${phaseConstraints.length ? `\n${phaseConstraints.join("\n")}\n` : ""}
 Coaching rules:
 ${distanceGuidance ? `- ${distanceGuidance}\n` : ""}- ${coachingRules.join("\n- ")}
 
@@ -2887,6 +3037,7 @@ Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.
       const injuryCtx = dayInjuries?.length
         ? `\nTODAY'S PAIN AREAS: ${dayInjuries.join(", ")} — modify the session to protect these areas. Avoid movements that load them directly; suggest alternatives where relevant.`
         : "";
+      const profileInjuryRules = buildInjuryConstraints(p.injuries).join("\n");
       const easyBand = deriveEasyPace(p.racePace);
       const longRunPace = deriveLongRunPace(p.racePace);
       const pacePin = [
@@ -2906,7 +3057,7 @@ Each day's type MUST match the Schedule exactly. mainSet null for rest/crossfit.
 Session type: ${SESSION_LABELS[newType] || newType} (${newType})
 Athlete: ${goalLabel} in ${p.goalTime} | Threshold: ${profileTrainingPaces(p).threshold}/km | Race pace: ${p.racePace}/km | Long run pace: ${profileTrainingPaces(p).longRun}/km${easyBand ? ` | Easy band: ${easyBand.min}–${easyBand.max}/km` : ""} | Easy HR: ${p.easyHR} bpm | Level: ${p.experience}${p.garminPredicted ? ` | Current fitness: ${p.garminPredicted}` : ""}
 Week context: ${weekCtx}${intensityCtx}${injuryCtx}
-${pacePin ? `\n${pacePin}\n` : ""}
+${pacePin ? `\n${pacePin}\n` : ""}${profileInjuryRules ? `\n${profileInjuryRules}\n` : ""}
 Respond with ONLY this JSON:
 DAY_JSON
 { "type": "${newType}", "mainSet": "<specific targets: exact distance, pace, reps, rest periods, HR zone>" }
@@ -3110,6 +3261,12 @@ Include: exact paces, HR zones (bpm), cadence targets, rep structure, rest.`);
           <div style={{ margin:"12px 16px 0",padding:"10px 14px",borderRadius:10,background:"#e8f8f0",border:"1px solid #b0e8cc",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
             <span style={{ fontSize:13,color:"#0a6640",fontWeight:600 }}>✓ Your training data is now backed up to the cloud</span>
             <button onClick={()=>setMigrated(false)} style={{ background:"none",border:"none",color:"#0a6640",cursor:"pointer",fontSize:18,padding:0,lineHeight:1 }}>×</button>
+          </div>
+        )}
+        {syncedCount>0&&(
+          <div style={{ margin:"12px 16px 0",padding:"10px 14px",borderRadius:10,background:"#fff4ee",border:"1px solid #fcc9ae",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+            <span style={{ fontSize:13,color:"#c2440a",fontWeight:600 }}>⚡ {syncedCount} run{syncedCount>1?"s":""} synced from Strava</span>
+            <button onClick={()=>setSyncedCount(0)} style={{ background:"none",border:"none",color:"#c2440a",cursor:"pointer",fontSize:18,padding:0,lineHeight:1 }}>×</button>
           </div>
         )}
         {screen==="home"&&<HomeScreen store={store} today={today} loading={loading} loadingMsg={loadingMsg} error={error} hasProfile={hasProfile} onGeneratePlan={generateWeekPlan} onGoProfile={()=>setScreen("profile")} onSaveScheduleOverride={handleScheduleOverride} onSaveSession={saveSession} onSetDayIntensity={handleSetDayIntensity} onSetDayInjury={handleSetDayInjury}/>}
